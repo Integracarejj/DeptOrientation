@@ -6,19 +6,15 @@ export const dynamic = "force-dynamic";
 /**
  * API Route: Employees List + Create Proxy
  *
- * Purpose:
- * - Secure proxy between the Next.js UI and Azure Functions (Graph boundary)
- * - Keeps secrets server-side
+ * GET  /api/employees
+ *  -> Azure Function: EmployeeProfileGet
  *
- * Routes:
- * - GET  /api/employees
- *   Proxies to Azure Function EmployeeProfileGet
- *   Returns: { items: [{ id, fields }] }
+ * POST /api/employees
+ *  -> Azure Function: EmployeeProfileCreate   (NEW - now deployed)
  *
- * - POST /api/employees
- *   Proxies to Azure Function EmployeeProfileCreate
- *   Body: { title, roleLookupId, supervisorLookupId?, startDate }
- *   Returns: { id } (or passes through function response; UI accepts { id } or { employeeProfileId })
+ * Notes:
+ * - Keeps secrets server-side (AZURE_FUNCTION_BASE_URL, AZURE_FUNCTION_CODE)
+ * - POST returns { id } (new EmployeeProfiles list item id)
  */
 
 function getRequiredEnv(name: string): string {
@@ -61,23 +57,24 @@ export async function POST(req: Request) {
 
         const body = await req.json().catch(() => ({} as any));
 
-        // Minimal validation (UI also validates)
+        // Accept either:
+        // - roleLookupId (number) OR
+        // - roleCode (string like "ASD")  <-- recommended for dropdown
         const title = String(body?.title ?? "").trim();
-        const roleLookupId = body?.roleLookupId;
         const startDate = String(body?.startDate ?? "").trim();
         const supervisorLookupId = body?.supervisorLookupId ?? null;
 
-        if (!title) {
-            return NextResponse.json({ error: "Missing required field: title" }, { status: 400 });
-        }
-        if (roleLookupId === null || roleLookupId === undefined || String(roleLookupId).trim() === "") {
-            return NextResponse.json({ error: "Missing required field: roleLookupId" }, { status: 400 });
-        }
-        if (!startDate) {
-            return NextResponse.json({ error: "Missing required field: startDate" }, { status: 400 });
+        const roleLookupId = body?.roleLookupId ?? null;
+        const roleCode = String(body?.roleCode ?? "").trim();
+
+        if (!title) return NextResponse.json({ error: "Missing required field: title" }, { status: 400 });
+        if (!startDate) return NextResponse.json({ error: "Missing required field: startDate" }, { status: 400 });
+
+        if ((roleLookupId === null || roleLookupId === undefined || String(roleLookupId).trim() === "") && !roleCode) {
+            return NextResponse.json({ error: "Provide roleLookupId (number) OR roleCode (string)" }, { status: 400 });
         }
 
-        // NOTE: Ensure this matches your deployed Azure Function route name
+        // IMPORTANT: This must match the Azure Function route you deployed
         const url = `${baseUrl}/api/EmployeeProfileCreate?code=${encodeURIComponent(funcCode)}`;
 
         const res = await fetch(url, {
@@ -86,28 +83,27 @@ export async function POST(req: Request) {
             cache: "no-store",
             body: JSON.stringify({
                 title,
-                roleLookupId,
-                supervisorLookupId,
                 startDate,
+                supervisorLookupId,
+                roleLookupId,
+                roleCode,
             }),
         });
 
         const text = await res.text();
 
         if (!res.ok) {
+            // preserve Azure status/details for debugging
             return NextResponse.json(
                 { error: "Azure Function call failed", status: res.status, details: text },
                 { status: 500 }
             );
         }
 
-        // Pass through function JSON; but guarantee we return an id-like field
         const json = text ? (JSON.parse(text) as any) : {};
         const id = String(json?.id ?? json?.employeeProfileId ?? json?.employeeId ?? "").trim();
 
         if (id) return NextResponse.json({ id });
-
-        // If function returns some other structure, still return it (UI will handle common shapes)
         return NextResponse.json(json);
     } catch (e) {
         return NextResponse.json(

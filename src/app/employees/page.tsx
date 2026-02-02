@@ -3,14 +3,13 @@
  * ------------------------------------
  * Employees list + PRIMARY FLOW:
  *   "+ New Employee" modal → "Release Orientation Items"
- *     1) POST /api/employees (creates EmployeeProfiles item via Azure Function)
+ *     1) POST /api/employees (creates EmployeeProfiles item via Azure Function EmployeeProfileCreate)
  *     2) POST /api/orientation-tracker/release/[employeeId] (OrientationUpdater)
  *
- * UI goals:
- * - Light/Airtable-ish modal (subtle overlay)
- * - Strong input contrast (dark text, readable placeholders)
- * - "+ New Employee" top-left, teal, highly discoverable
- * - Clear step-specific errors (Create vs Release)
+ * Notes:
+ * - Role is a SharePoint lookup on EmployeeProfiles.
+ * - UI uses a Role dropdown (roleCode like "ASD") and sends roleCode to server.
+ * - Azure Function resolves roleCode -> Roles list item id -> stores RoleLookupId.
  */
 
 "use client";
@@ -119,6 +118,23 @@ function Modal({
     );
 }
 
+// Role dropdown options (UI-friendly)
+const ROLE_OPTIONS: Array<{ code: string; name: string }> = [
+    { code: "ASD", name: "Administrative Services Director" },
+    { code: "CRA", name: "Community Relations Associate" },
+    { code: "CRD", name: "Community Relations Director" },
+    { code: "DED", name: "Dining Experience Director" },
+    { code: "EOO", name: "Executive Operations Officer" },
+    { code: "HA", name: "Hospitality Associate" },
+    { code: "HEA", name: "Hospitality Executive Associate" },
+    { code: "LSLS", name: "Dual role - LifeStages/LifeStories" },
+    { code: "LStaD", name: "LifeStages Director" },
+    { code: "LStoD", name: "LifeStories Director" },
+    { code: "MA", name: "Maintenance Assistant" },
+    { code: "RWD", name: "Resident Wellness Director" },
+    { code: "SME", name: "Safety & Maintenance Engineering" },
+];
+
 export default function EmployeesPage() {
     const router = useRouter();
 
@@ -132,7 +148,7 @@ export default function EmployeesPage() {
     // Modal state + form fields
     const [modalOpen, setModalOpen] = useState(false);
     const [employeeName, setEmployeeName] = useState("");
-    const [roleLookupId, setRoleLookupId] = useState("");
+    const [roleCode, setRoleCode] = useState(""); // <-- dropdown value like "ASD"
     const [supervisorLookupId, setSupervisorLookupId] = useState("");
     const [startDate, setStartDate] = useState(""); // yyyy-mm-dd
 
@@ -205,7 +221,7 @@ export default function EmployeesPage() {
 
     function resetModal() {
         setEmployeeName("");
-        setRoleLookupId("");
+        setRoleCode("");
         setSupervisorLookupId("");
         setStartDate("");
         setSubmitting(false);
@@ -220,13 +236,20 @@ export default function EmployeesPage() {
     }
 
     const canSubmit =
-        employeeName.trim().length > 0 && roleLookupId.trim().length > 0 && startDate.trim().length > 0;
+        employeeName.trim().length > 0 && roleCode.trim().length > 0 && startDate.trim().length > 0;
 
     async function createEmployeeProfile(): Promise<string> {
+        const supervisorRaw = supervisorLookupId.trim();
+
+        // Only pass SupervisorLookupId if it's already a numeric SharePoint lookup id.
+        // If the user types a name/email (common), we omit it for now to avoid Azure Function int() errors.
+        const supervisorLookupIdSafe =
+            supervisorRaw && /^\d+$/.test(supervisorRaw) ? supervisorRaw : null;
+
         const payload = {
             title: employeeName.trim(),
-            roleLookupId: roleLookupId.trim(),
-            supervisorLookupId: supervisorLookupId.trim() || null,
+            roleCode: roleCode.trim(), // <-- send roleCode, server resolves to lookup id
+            supervisorLookupId: supervisorLookupIdSafe,
             startDate: startDate.trim(),
         };
 
@@ -238,14 +261,19 @@ export default function EmployeesPage() {
 
         const text = await res.text().catch(() => "");
         if (!res.ok) {
-            // Surface backend error clearly
             throw new Error(`Create failed (${res.status}): ${text || "No details"}`);
         }
 
         const json = text ? JSON.parse(text) : {};
-        const id = toIdString(json?.id) || toIdString(json?.employeeProfileId) || toIdString(json?.employeeId);
+        const id =
+            toIdString(json?.id) ||
+            toIdString(json?.employeeProfileId) ||
+            toIdString(json?.employeeId);
 
-        if (!id) throw new Error("Create succeeded but no employee id was returned from POST /api/employees.");
+        if (!id)
+            throw new Error(
+                "Create succeeded but no employee id was returned from POST /api/employees."
+            );
         return id;
     }
 
@@ -266,23 +294,21 @@ export default function EmployeesPage() {
         setSuccessMsg(null);
 
         try {
-            // Step 1: Create employee
             const newEmployeeId = await createEmployeeProfile();
             createdEmployeeIdRef.current = newEmployeeId;
 
-            // Optimistically insert into table immediately
+            // Optimistic row so it appears immediately
             const optimisticRow: EmployeeRow = {
                 id: newEmployeeId,
                 fields: {
                     Title: employeeName.trim(),
-                    RoleLookupId: roleLookupId.trim(),
+                    RoleCode: roleCode.trim(), // display-friendly until SharePoint refresh
                     SupervisorLookupId: supervisorLookupId.trim() || null,
                     Date: startDate.trim(),
                 },
             };
             setItems((prev) => [optimisticRow, ...prev]);
 
-            // Step 2: Release orientation items
             await releaseOrientationItems(newEmployeeId);
             setReleasedIds((prev) => ({ ...prev, [newEmployeeId]: true }));
 
@@ -303,7 +329,7 @@ export default function EmployeesPage() {
                     Track department orientation progress and manage employee onboarding.
                 </p>
 
-                {/* Top-left button (teal, more discoverable) */}
+                {/* Top-left button */}
                 <div className="mt-4">
                     <button
                         type="button"
@@ -394,7 +420,9 @@ export default function EmployeesPage() {
                 </table>
             </section>
 
-            <p className="text-sm text-gray-500">Select an employee name to view detailed orientation progress.</p>
+            <p className="text-sm text-gray-500">
+                Select an employee name to view detailed orientation progress.
+            </p>
 
             {/* Modal */}
             <Modal
@@ -427,20 +455,26 @@ export default function EmployeesPage() {
                             <input
                                 value={employeeName}
                                 onChange={(e) => setEmployeeName(e.target.value)}
-                                placeholder="e.g. TestEmployee14"
+                                placeholder="e.g. Jane Doe"
                                 className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-gray-300"
                             />
                         </label>
 
                         <label className="block">
                             <FieldLabel>Role</FieldLabel>
-                            <input
-                                value={roleLookupId}
-                                onChange={(e) => setRoleLookupId(e.target.value)}
-                                placeholder="RoleLookupId (e.g. 3)"
-                                className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-gray-300"
-                            />
-                            <TextHint>Minimal v1: enter RoleLookupId. (We can replace with a picker later.)</TextHint>
+                            <select
+                                value={roleCode}
+                                onChange={(e) => setRoleCode(e.target.value)}
+                                className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-900 outline-none focus:ring-2 focus:ring-gray-300"
+                            >
+                                <option value="">Select a role…</option>
+                                {ROLE_OPTIONS.map((r) => (
+                                    <option key={r.code} value={r.code}>
+                                        {r.code} — {r.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <TextHint>We store the SharePoint lookup id server-side based on this code.</TextHint>
                         </label>
 
                         <label className="block">
@@ -448,10 +482,10 @@ export default function EmployeesPage() {
                             <input
                                 value={supervisorLookupId}
                                 onChange={(e) => setSupervisorLookupId(e.target.value)}
-                                placeholder="SupervisorLookupId (optional)"
+                                placeholder="freewrite - lookup to be added later"
                                 className="mt-1 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-gray-300"
                             />
-                            <TextHint>Optional for now. Can default server-side to current user later.</TextHint>
+                            <TextHint>Optional for now. Can default server-side later.</TextHint>
                         </label>
 
                         <label className="block sm:col-span-2">
