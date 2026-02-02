@@ -1,5 +1,27 @@
 "use client";
 
+/**
+ * Page: Employee Detail (Employees / [id])
+ *
+ * Purpose:
+ * - Displays per-employee onboarding/orientation progress in two sections:
+ *   1) General Orientation
+ *   2) Department Orientation
+ * - Hydrates checklist items from SharePoint via Next.js read proxy:
+ *   GET /api/orientation-tracker/[employeeId]
+ * - Allows Supervisor/Admin to toggle item status.
+ *
+ * Write-back (Phase B):
+ * - When items are hydrated from SharePoint, each item.id is the SharePoint list item ID.
+ * - On toggle, this page calls the Next.js write proxy:
+ *   POST/PATCH /api/orientation-tracker/item/[itemId]
+ * - That write proxy forwards to the Azure Function OrientationTrackerUpdate (Graph boundary).
+ *
+ * Notes:
+ * - Mock items (ids like "gen-1") remain local-only and do NOT write back.
+ * - SharePoint items (numeric ids like "22") write back via the proxy.
+ */
+
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams, useParams } from "next/navigation";
 import * as React from "react";
@@ -140,7 +162,6 @@ function buildHoverAuditText(item: ChecklistItemT): string | undefined {
         }
     }
 
-    // Always helpful as a final line once you start using it:
     if (item.updatedBy || item.updatedAt) {
         parts.push(
             `Last updated${item.updatedBy ? ` by ${item.updatedBy}` : ""}${item.updatedAt ? ` on ${formatWhen(item.updatedAt)}` : ""
@@ -154,7 +175,6 @@ function buildHoverAuditText(item: ChecklistItemT): string | undefined {
 
 /* =========================
    Safe coercion + SharePoint mapping helpers
-   (Only place you should tweak field names later)
 ========================= */
 
 function asString(v: unknown): string | undefined {
@@ -166,25 +186,18 @@ function asString(v: unknown): string | undefined {
 function asItemStatus(v: unknown): ItemStatus {
     const s = (asString(v) ?? "").trim();
 
-    // Accept SharePoint-friendly values written by your function
     if (s.toLowerCase() === "not started") return "not_started";
     if (s.toLowerCase() === "in progress") return "in_progress";
     if (s.toLowerCase() === "completed") return "completed";
 
-    // Also accept underscore format (future-proof)
     if (s === "not_started" || s === "in_progress" || s === "completed") return s;
 
     return "not_started";
 }
 
-/**
- * Maps one OrientationTracker list row → your ChecklistItemT shape.
- * IMPORTANT: We use row.id as ChecklistItemT.id so later Phase B can PATCH by list item id.
- */
 function trackerRowToChecklistItem(row: TrackerRow): ChecklistItemT {
     const f = row.fields;
 
-    // Label candidates: adjust when you confirm internal column names
     const label =
         asString(f["Title"]) ??
         asString(f["ItemName"]) ??
@@ -206,11 +219,6 @@ function trackerRowToChecklistItem(row: TrackerRow): ChecklistItemT {
     };
 }
 
-/**
- * Splits tracker rows into your two section buckets.
- * This is intentionally simple + conservative.
- * Tune later once you confirm the real Section field internal name and values.
- */
 function splitIntoSections(rows: TrackerRow[]): {
     general: ChecklistItemT[];
     department: ChecklistItemT[];
@@ -233,7 +241,6 @@ function splitIntoSections(rows: TrackerRow[]): {
         } else if (section.includes("department")) {
             department.push(item);
         } else {
-            // default bucket (keeps UI stable even if section naming differs)
             department.push(item);
         }
     }
@@ -282,10 +289,12 @@ function ChecklistItem({
     item,
     canEdit,
     onToggle,
+    saving,
 }: {
     item: ChecklistItemT;
     canEdit: boolean;
     onToggle: (itemId: string) => void;
+    saving?: boolean;
 }) {
     const icon = item.status === "completed" ? "✓" : item.status === "in_progress" ? "◐" : "•";
 
@@ -309,33 +318,36 @@ function ChecklistItem({
 
     const hoverAudit = buildHoverAuditText(item);
 
-    const body = (
-        <button
-            type="button"
-            className={[
-                "w-full text-left rounded-md px-2 py-1 -mx-2",
-                "flex items-start gap-3",
-                clickableClasses,
-                canEdit ? "focus:outline-none focus:ring-1 focus:ring-white/20" : "",
-            ].join(" ")}
-            onClick={() => {
-                if (!canEdit) return;
-                onToggle(item.id);
-            }}
-            disabled={!canEdit}
-            aria-disabled={!canEdit}
-            title={
-                canEdit
-                    ? "Click to change status"
-                    : "Read-only (Supervisor/Admin required to change status)"
-            }
-        >
-            {hoverAudit ? <Tooltip text={hoverAudit}>{iconNode}</Tooltip> : iconNode}
-            <span className="text-slate-200">{item.label}</span>
-        </button>
+    return (
+        <div className="py-1">
+            <button
+                type="button"
+                className={[
+                    "w-full text-left rounded-md px-2 py-1 -mx-2",
+                    "flex items-start gap-3",
+                    clickableClasses,
+                    canEdit ? "focus:outline-none focus:ring-1 focus:ring-white/20" : "",
+                    saving ? "opacity-60" : "",
+                ].join(" ")}
+                onClick={() => {
+                    if (!canEdit || saving) return;
+                    onToggle(item.id);
+                }}
+                disabled={!canEdit || saving}
+                aria-disabled={!canEdit || saving}
+                title={
+                    !canEdit
+                        ? "Read-only (Supervisor/Admin required to change status)"
+                        : saving
+                            ? "Saving…"
+                            : "Click to change status"
+                }
+            >
+                {hoverAudit ? <Tooltip text={hoverAudit}>{iconNode}</Tooltip> : iconNode}
+                <span className="text-slate-200">{item.label}</span>
+            </button>
+        </div>
     );
-
-    return <div className="py-1">{body}</div>;
 }
 
 function SectionCard({
@@ -345,6 +357,7 @@ function SectionCard({
     items,
     canEdit,
     onToggleItem,
+    savingIds,
 }: {
     title: string;
     subtitle: string;
@@ -352,6 +365,7 @@ function SectionCard({
     items: ChecklistItemT[];
     canEdit: boolean;
     onToggleItem: (itemId: string) => void;
+    savingIds: Set<string>;
 }) {
     return (
         <section className="rounded-lg border border-white/10 bg-white/3 p-4">
@@ -367,7 +381,13 @@ function SectionCard({
 
             <div className="space-y-1">
                 {items.map((item) => (
-                    <ChecklistItem key={item.id} item={item} canEdit={canEdit} onToggle={onToggleItem} />
+                    <ChecklistItem
+                        key={item.id}
+                        item={item}
+                        canEdit={canEdit}
+                        onToggle={onToggleItem}
+                        saving={savingIds.has(item.id)}
+                    />
                 ))}
             </div>
         </section>
@@ -431,9 +451,8 @@ export default function EmployeeDetailPage() {
     if (!employee) return null;
 
     const canEdit = CURRENT_ROLE === "supervisor" || CURRENT_ROLE === "admin";
-
-    // helper for timestamps
     const nowIso = () => new Date().toISOString();
+    const isSharePointItemId = (itemId: string) => /^\d+$/.test(itemId);
 
     /* --- Checklist state --- */
     const [general, setGeneral] = React.useState<ChecklistItemT[]>([
@@ -485,7 +504,6 @@ export default function EmployeeDetailPage() {
 
     /* =========================
        SharePoint hydration (READ)
-       - keeps mock as fallback
     ========================= */
     const [trackerLoading, setTrackerLoading] = React.useState(false);
     const [trackerError, setTrackerError] = React.useState<string | null>(null);
@@ -548,12 +566,34 @@ export default function EmployeeDetailPage() {
         };
     }, [id]);
 
-    // Toggle logic (adds who/when)
+    /* =========================
+       Write-back (UPDATE)
+       Calls Next.js proxy: /api/orientation-tracker/item/[itemId]
+    ========================= */
+    const [saveError, setSaveError] = React.useState<string | null>(null);
+    const [savingIds, setSavingIds] = React.useState<Set<string>>(new Set());
+
+    async function persistStatus(itemId: string, status: ItemStatus) {
+        const res = await fetch(`/api/orientation-tracker/item/${encodeURIComponent(itemId)}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ status, actor: CURRENT_USER }),
+        });
+
+        if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `Update failed (${res.status})`);
+        }
+
+        // Function response body is not required for UI, but we read it to complete the request
+        await res.text().catch(() => null);
+    }
+
+    // Toggle logic (adds who/when) — still useful even if SharePoint audit fields are added later
     const applyToggle = (item: ChecklistItemT): ChecklistItemT => {
         const next = nextStatus(item.status);
         const stamp = nowIso();
 
-        // Base update stamp (every change)
         const updatedBase = {
             updatedBy: CURRENT_USER,
             updatedAt: stamp,
@@ -594,19 +634,60 @@ export default function EmployeeDetailPage() {
         };
     };
 
-    const toggleGeneral = (itemId: string) => {
-        setGeneral((prev) => prev.map((i) => (i.id === itemId ? applyToggle(i) : i)));
-    };
+    async function toggleWithWriteBack(
+        section: "general" | "department",
+        itemId: string
+    ) {
+        if (!canEdit) return;
 
-    const toggleDepartment = (itemId: string) => {
-        setDepartment((prev) => prev.map((i) => (i.id === itemId ? applyToggle(i) : i)));
-    };
+        setSaveError(null);
+
+        // Find current item + next status
+        const currentList = section === "general" ? general : department;
+        const currentItem = currentList.find((i) => i.id === itemId);
+        if (!currentItem) return;
+
+        const next = nextStatus(currentItem.status);
+
+        // Optimistic update
+        const prevGeneral = general;
+        const prevDepartment = department;
+
+        if (section === "general") {
+            setGeneral((prev) => prev.map((i) => (i.id === itemId ? applyToggle(i) : i)));
+        } else {
+            setDepartment((prev) => prev.map((i) => (i.id === itemId ? applyToggle(i) : i)));
+        }
+
+        // Only attempt write-back when this is a SharePoint list item id (numeric)
+        const shouldWriteBack = trackerSource === "sharepoint" && isSharePointItemId(itemId);
+
+        if (!shouldWriteBack) return;
+
+        setSavingIds((s) => new Set(s).add(itemId));
+
+        try {
+            await persistStatus(itemId, next);
+        } catch (err) {
+            // Rollback optimistic change
+            setGeneral(prevGeneral);
+            setDepartment(prevDepartment);
+            setSaveError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setSavingIds((s) => {
+                const n = new Set(s);
+                n.delete(itemId);
+                return n;
+            });
+        }
+    }
+
+    const toggleGeneral = (itemId: string) => toggleWithWriteBack("general", itemId);
+    const toggleDepartment = (itemId: string) => toggleWithWriteBack("department", itemId);
 
     // Derived statuses
     const generalStatus = getSectionStatus(general);
     const deptStatus = getSectionStatus(department);
-
-    // Overall gating: General + Department (UI-first)
     const overall = deriveOverallStatus([generalStatus, deptStatus]);
 
     return (
@@ -622,19 +703,23 @@ export default function EmployeeDetailPage() {
                         {employee.role} · Last updated {employee.lastUpdated}
                     </p>
 
-                    {/* TEMP role indicator for testing */}
                     <p className="mt-2 text-xs text-slate-400">
                         Mode (temporary):{" "}
                         <span className="font-mono text-slate-200">{CURRENT_ROLE}</span>
                         {canEdit ? " — editing enabled" : " — read-only"}
                     </p>
 
-                    {/* Data source indicator (helpful while plumbing SharePoint) */}
                     <p className="mt-1 text-xs text-slate-500">
                         Data source: <span className="font-mono text-slate-200">{trackerSource}</span>
                         {trackerLoading ? " — loading tracker…" : null}
                         {trackerError ? <span className="ml-2 text-red-400">— {trackerError}</span> : null}
                     </p>
+
+                    {saveError ? (
+                        <p className="mt-2 text-xs text-red-400">
+                            Save error (rolled back): {saveError}
+                        </p>
+                    ) : null}
                 </div>
 
                 <Link
@@ -657,6 +742,7 @@ export default function EmployeeDetailPage() {
                     items={general}
                     canEdit={canEdit}
                     onToggleItem={toggleGeneral}
+                    savingIds={savingIds}
                 />
 
                 <SectionCard
@@ -666,6 +752,7 @@ export default function EmployeeDetailPage() {
                     items={department}
                     canEdit={canEdit}
                     onToggleItem={toggleDepartment}
+                    savingIds={savingIds}
                 />
             </div>
 
