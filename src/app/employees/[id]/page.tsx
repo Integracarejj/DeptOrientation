@@ -4,10 +4,12 @@
  * Page: Employee Detail (Employees / [id])
  *
  * Data:
- * - GET /api/employees/[id]
- * - GET /api/orientation-tracker/[id]
+ * - GET  /api/employees/[id]
+ * - GET  /api/orientation-tracker/[id]
  * - POST /api/orientation-tracker/release/[id]
  * - POST /api/orientation-tracker/item/[itemId]
+ * - POST /api/audit/reviewed                 (audit: supervisor reviewed page)
+ * - POST /api/employees/reviewed/[id]        (best-effort: flip EmployeeProfiles Reviewed=Yes; optional backend)
  */
 
 import Link from "next/link";
@@ -19,6 +21,8 @@ import * as React from "react";
 ========================= */
 type Role = "employee" | "supervisor" | "admin";
 const CURRENT_ROLE: Role = "supervisor";
+/** Used for audit “reviewedBy”; replace with real identity when SSO lands */
+const CURRENT_USER = "Jeremy Joyner";
 
 /* =========================
    Types
@@ -45,6 +49,9 @@ type ChecklistItemT = {
     completedAt?: string;
     updatedBy?: string;
     updatedAt?: string;
+
+    /** stable ordering key (TemplateTaskId or similar) */
+    orderKey?: number;
 };
 
 type TrackerRow = {
@@ -60,6 +67,13 @@ function asString(v: unknown): string | undefined {
     if (typeof v === "string") return v;
     if (v === null || v === undefined) return undefined;
     return String(v);
+}
+function asNumber(v: unknown): number | undefined {
+    if (typeof v === "number") return v;
+    const s = asString(v);
+    if (!s) return undefined;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : undefined;
 }
 
 function asItemStatus(v: unknown): ItemStatus {
@@ -77,17 +91,16 @@ function toServerStatus(s: ItemStatus): "Not Started" | "In Progress" | "Complet
     return "Not Started";
 }
 
-function nextStatus(s: ItemStatus): ItemStatus {
-    if (s === "not_started") return "in_progress";
-    if (s === "in_progress") return "completed";
-    return "not_started";
+/** We no longer change order when status changes. */
+function nextStatus(_s: ItemStatus): ItemStatus {
+    return _s; // no-op; kept for reference
 }
 
 /**
  * Role derivation:
  * 1) Try Employee fields first (RoleName, RoleNameText, Role (lookup text), RoleCodeText)
  * 2) If empty, infer from OrientationTracker rows (RoleNameText, Role, RoleCodeText)
- * Ensures header always shows a role even if only RoleLookupId exists in EmployeeProfiles.
+ * 3) Persist to sessionStorage to survive navigation
  */
 function getRoleFromEmployeeFields(f: Record<string, unknown>): string | undefined {
     return (
@@ -111,18 +124,41 @@ function getRoleFromTrackerRows(rows: TrackerRow[]): string | undefined {
     return undefined;
 }
 
-/** Strip a leading bullet or hyphen and whitespace from labels coming from SharePoint. */
+function readRoleCache(empId: string): string | undefined {
+    try {
+        const k = `employeeRole:${empId}`;
+        const v = sessionStorage.getItem(k);
+        return v ?? undefined;
+    } catch {
+        return undefined;
+    }
+}
+function writeRoleCache(empId: string, role: string) {
+    try {
+        const k = `employeeRole:${empId}`;
+        sessionStorage.setItem(k, role);
+    } catch {
+        // ignore
+    }
+}
+
+/** Strip a leading bullet/hyphen + whitespace from some imported labels (display only). */
 function cleanLabel(label: string): string {
     return label.replace(/^\s*[•\-]\s*/, "");
 }
 
-function trackerRowToChecklistItem(row: TrackerRow): ChecklistItemT {
+function trackerRowToChecklistItem(row: TrackerRow, originalIndex: number): ChecklistItemT {
     const f = row.fields;
     const rawLabel =
         asString(f["Title"]) ??
         asString(f["ItemName"]) ??
         asString(f["ChecklistItem"]) ??
         "Untitled";
+    const orderKey =
+        asNumber(f["TemplateTaskId"]) ??
+        asNumber(f["templateTaskId"]) ??
+        originalIndex; // stable fallback
+
     return {
         id: row.id,
         label: cleanLabel(rawLabel),
@@ -134,6 +170,7 @@ function trackerRowToChecklistItem(row: TrackerRow): ChecklistItemT {
         completedAt: asString(f["CompletedAt"]),
         updatedBy: asString(f["UpdatedBy"]),
         updatedAt: asString(f["UpdatedAt"]),
+        orderKey,
     };
 }
 
@@ -141,21 +178,23 @@ function splitIntoSections(rows: TrackerRow[]) {
     const general: ChecklistItemT[] = [];
     const department: ChecklistItemT[] = [];
 
-    for (const r of rows) {
+    rows.forEach((r, idx) => {
         const rawCat = asString(r.fields["OrientationCategory"]) ?? "";
         const category = rawCat.trim() === "General" ? "General" : "Department"; // fallback
-        const item = trackerRowToChecklistItem(r);
+        const item = trackerRowToChecklistItem(r, idx);
         if (category === "General") general.push(item);
         else department.push(item);
-    }
+    });
 
-    const sortFn = (a: ChecklistItemT, b: ChecklistItemT) => {
-        const order = (s: ItemStatus) => (s === "completed" ? 2 : s === "in_progress" ? 1 : 0);
-        const d = order(a.status) - order(b.status);
-        return d !== 0 ? d : a.label.localeCompare(b.label);
+    // Stable order: TemplateTaskId (or original index) then alpha
+    const byStableOrder = (a: ChecklistItemT, b: ChecklistItemT) => {
+        const ak = a.orderKey ?? 0;
+        const bk = b.orderKey ?? 0;
+        if (ak !== bk) return ak - bk;
+        return a.label.localeCompare(b.label);
     };
-    general.sort(sortFn);
-    department.sort(sortFn);
+    general.sort(byStableOrder);
+    department.sort(byStableOrder);
 
     return { general, department };
 }
@@ -232,19 +271,81 @@ function Tabs({
     );
 }
 
+/** Three-state status selector shown at the left of each item row. */
+function StatusSelector({
+    value,
+    onSelect,
+    disabled,
+}: {
+    value: ItemStatus;
+    onSelect: (s: ItemStatus) => void;
+    disabled?: boolean;
+}) {
+    const btnBase =
+        "inline-flex items-center justify-center h-5 w-5 rounded-sm ring-1 text-[10px] font-bold";
+    const neutral = "bg-gray-100 ring-gray-300 text-gray-600";
+    const activeNS = "bg-gray-700 ring-gray-700 text-white";
+    const activeIP = "bg-amber-500 ring-amber-500 text-white";
+    const activeCP = "bg-emerald-600 ring-emerald-600 text-white";
+
+    return (
+        <div className="flex items-center gap-1" aria-label="Status selector">
+            <button
+                type="button"
+                disabled={disabled}
+                className={[
+                    btnBase,
+                    value === "not_started" ? activeNS : neutral,
+                    disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                ].join(" ")}
+                title="Not Started"
+                onClick={() => onSelect("not_started")}
+            >
+                •
+            </button>
+            <button
+                type="button"
+                disabled={disabled}
+                className={[
+                    btnBase,
+                    value === "in_progress" ? activeIP : neutral,
+                    disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                ].join(" ")}
+                title="In Progress"
+                onClick={() => onSelect("in_progress")}
+            >
+                ◐
+            </button>
+            <button
+                type="button"
+                disabled={disabled}
+                className={[
+                    btnBase,
+                    value === "completed" ? activeCP : neutral,
+                    disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                ].join(" ")}
+                title="Completed"
+                onClick={() => onSelect("completed")}
+            >
+                ✓
+            </button>
+        </div>
+    );
+}
+
 function SectionCard({
     title,
     subtitle,
     items,
     canEdit,
-    onToggleItem,
+    onSetStatus,
     savingIds,
 }: {
     title: string;
     subtitle: string;
     items: ChecklistItemT[];
     canEdit: boolean;
-    onToggleItem: (itemId: string) => void;
+    onSetStatus: (itemId: string, status: ItemStatus) => void;
     savingIds: Set<string>;
 }) {
     return (
@@ -265,7 +366,7 @@ function SectionCard({
                         key={item.id}
                         item={item}
                         canEdit={canEdit}
-                        onToggle={onToggleItem}
+                        onSetStatus={onSetStatus}
                         saving={savingIds.has(item.id)}
                     />
                 ))}
@@ -278,17 +379,15 @@ function SectionCard({
 function ChecklistItem({
     item,
     canEdit,
-    onToggle,
+    onSetStatus,
     saving,
 }: {
     item: ChecklistItemT;
     canEdit: boolean;
-    onToggle: (itemId: string) => void;
+    onSetStatus: (itemId: string, status: ItemStatus) => void;
     saving?: boolean;
 }) {
-    const icon = item.status === "completed" ? "✓" : item.status === "in_progress" ? "◐" : "•";
-
-    // Not Started → light gray, In Progress → yellow, Completed → green
+    // Row tone (kept)
     const tone =
         item.status === "completed"
             ? "text-emerald-700 bg-emerald-100 ring-emerald-200"
@@ -296,33 +395,25 @@ function ChecklistItem({
                 ? "text-amber-700 bg-amber-100 ring-amber-200"
                 : "text-gray-700 bg-gray-100 ring-gray-200";
 
-    const clickable = canEdit ? "cursor-pointer hover:bg-white/70" : "cursor-default opacity-95";
-
     return (
         <div className="py-1">
-            <button
-                type="button"
-                title={item.hoverText ?? item.label}
+            <div
                 className={[
-                    "w-full text-left rounded-md px-2 py-1 -mx-2",
-                    "flex items-start gap-3 ring-1",
+                    "w-full rounded-md px-2 py-1 -mx-2",
+                    "flex items-center gap-3 ring-1",
                     tone,
-                    clickable,
                     saving ? "opacity-60" : "",
                 ].join(" ")}
-                onClick={() => {
-                    if (!canEdit || saving) return;
-                    onToggle(item.id);
-                }}
-                disabled={!canEdit || saving}
-                aria-disabled={!canEdit || saving}
-                aria-label={`Toggle status for ${item.label}`}
             >
-                <span className="inline-flex h-5 w-5 items-center justify-center font-semibold leading-none">
-                    {icon}
-                </span>
-                <span className="text-gray-900">{item.label}</span>
-            </button>
+                <StatusSelector
+                    value={item.status}
+                    onSelect={(s) => onSetStatus(item.id, s)}
+                    disabled={!canEdit || !!saving}
+                />
+                <div className="flex-1">
+                    <div className="text-gray-900">{item.label}</div>
+                </div>
+            </div>
         </div>
     );
 }
@@ -355,12 +446,13 @@ export default function EmployeeDetailPage() {
                 const json = await res.json();
                 const f: Record<string, unknown> = json.item?.fields ?? json.fields ?? json;
 
-                const roleFromEmployee = getRoleFromEmployeeFields(f);
+                // Prefer API fields, else restore from cache
+                const roleFromEmployee = getRoleFromEmployeeFields(f) ?? readRoleCache(id) ?? "—";
 
                 setEmployee({
                     id,
                     name: asString(f["Title"]) ?? `Employee ${id}`,
-                    role: roleFromEmployee ?? "—",
+                    role: roleFromEmployee,
                     lastUpdated: asString(f["Modified"]) ?? "—",
                 });
             } catch (e) {
@@ -375,6 +467,7 @@ export default function EmployeeDetailPage() {
     const [trackerLoaded, setTrackerLoaded] = React.useState(false);
     const [savingIds, setSavingIds] = React.useState<Set<string>>(new Set());
     const [error, setError] = React.useState<string | null>(null);
+    const [allCompleted, setAllCompleted] = React.useState(false);
 
     const loadTracker = React.useCallback(async () => {
         if (!id) return;
@@ -389,16 +482,25 @@ export default function EmployeeDetailPage() {
             setGeneral(s.general);
             setDepartment(s.department);
 
-            // If employee.role is empty/placeholder, infer from tracker presentational helpers.
+            // compute completion
+            const isDone =
+                s.general.every((i) => i.status === "completed") &&
+                s.department.every((i) => i.status === "completed");
+            setAllCompleted(isDone);
+
+            // If employee.role is empty/placeholder, infer from tracker; cache it for future visits.
             const inferred = getRoleFromTrackerRows(rows);
-            setEmployee((prev) =>
-                prev
-                    ? {
-                        ...prev,
-                        role: prev.role && prev.role !== "—" ? prev.role : inferred ?? prev.role,
-                    }
-                    : prev
-            );
+            if (inferred && inferred.trim()) {
+                setEmployee((prev) =>
+                    prev
+                        ? {
+                            ...prev,
+                            role: prev.role && prev.role !== "—" ? prev.role : inferred,
+                        }
+                        : prev
+                );
+                writeRoleCache(id, inferred);
+            }
         } catch (e) {
             setError(String(e));
         } finally {
@@ -421,27 +523,27 @@ export default function EmployeeDetailPage() {
         }
     }
 
-    /* Status cycle (POST + optimistic with 400 fallback) */
+    /* Status set (POST + optimistic with 400 fallback) */
     function updateLocal(itemId: string, newStatus: ItemStatus) {
         setGeneral((prev) => prev.map((x) => (x.id === itemId ? { ...x, status: newStatus } : x)));
         setDepartment((prev) => prev.map((x) => (x.id === itemId ? { ...x, status: newStatus } : x)));
     }
 
-    async function handleToggleItem(itemId: string) {
+    async function handleSetStatus(itemId: string, target: ItemStatus) {
         const findItem = (arr: ChecklistItemT[]) => arr.find((i) => i.id === itemId);
         const item = findItem(general) ?? findItem(department);
         if (!item) return;
 
-        const next = nextStatus(item.status);
         setSavingIds((s) => new Set(s).add(itemId));
-        updateLocal(itemId, next);
+        const prevStatus = item.status;
+        updateLocal(itemId, target);
 
         try {
             // 1) Attempt with human-readable values
             let res = await fetch(`/api/orientation-tracker/item/${itemId}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: toServerStatus(next) }),
+                body: JSON.stringify({ status: toServerStatus(target) }),
             });
 
             // 2) If 400, retry with snake_case machine codes
@@ -449,14 +551,14 @@ export default function EmployeeDetailPage() {
                 res = await fetch(`/api/orientation-tracker/item/${itemId}`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ status: next }), // "not_started" | "in_progress" | "completed"
+                    body: JSON.stringify({ status: target }), // "not_started" | "in_progress" | "completed"
                 });
             }
 
             if (!res.ok) throw new Error(`Save failed (${res.status})`);
             await loadTracker();
         } catch (e) {
-            updateLocal(itemId, item.status); // revert
+            updateLocal(itemId, prevStatus); // revert
             setError(String(e));
         } finally {
             setSavingIds((s) => {
@@ -467,11 +569,55 @@ export default function EmployeeDetailPage() {
         }
     }
 
+    /* ========== Audit: Mark Orientation as Reviewed (supervisor-only) ========== */
+    async function markReviewed() {
+        // Guard: only allow when all items are completed
+        if (!allCompleted) {
+            setError("All orientation items must be Completed before marking as Reviewed.");
+            return;
+        }
+
+        const reviewedAt = new Date().toISOString();
+
+        try {
+            // Write audit log (simple endpoint)
+            const resAudit = await fetch(`/api/audit/reviewed`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    employeeId: id,
+                    page: "Orientation",
+                    reviewedBy: CURRENT_USER,
+                    reviewedAt,
+                }),
+            });
+            if (!resAudit.ok) throw new Error(`Audit save failed (${resAudit.status})`);
+
+            // Best-effort: flip "Reviewed" on EmployeeProfiles (backend to implement)
+            const resReviewed = await fetch(`/api/employees/reviewed/${id}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    reviewed: true,
+                    reviewedAt,
+                    reviewedBy: CURRENT_USER,
+                }),
+            });
+            // ignore non-2xx for now
+
+            setError(null);
+            alert("Orientation marked as Reviewed.");
+        } catch (e) {
+            setError(String(e));
+        }
+    }
+
     /* Render */
     if (!employee) {
         return <p className="text-sm text-red-500">Error: {empError ?? "Loading…"} </p>;
     }
 
+    const roleForDisplay = employee?.role ?? "—";
     const empty = trackerLoaded && !general.length && !department.length;
 
     return (
@@ -479,17 +625,21 @@ export default function EmployeeDetailPage() {
             {/* Header */}
             <div className="relative z-10 flex items-end justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold">{employee.name}</h1>
-                    <p className="text-sm text-gray-600">
-                        {employee.role} · Last updated {employee.lastUpdated}
-                    </p>
+                    <h1 className="text-3xl font-bold">
+                        {employee.name}
+                        {roleForDisplay !== "—" && (
+                            <span className="text-xl font-semibold text-gray-400 ml-2">– {roleForDisplay}</span>
+                        )}
+                    </h1>
+                    <p className="text-sm text-gray-500">Last updated {employee.lastUpdated}</p>
                 </div>
+
                 <Link
                     href="/employees"
-                    className="text-sm text-blue-700 hover:underline"
-                    aria-label="Back to Employees"
+                    className="inline-flex items-center gap-2 rounded-md border border-gray-500/40 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700/30"
+                    aria-label="Back to Employee List"
                 >
-                    ← Back
+                    ← Back to Employee List
                 </Link>
             </div>
 
@@ -498,13 +648,36 @@ export default function EmployeeDetailPage() {
             {/* Orientation tab */}
             {tab === "orientation" && (
                 <>
+                    {/* Reviewed button for supervisors/admins */}
+                    {canEdit && (
+                        <div className="flex justify-end">
+                            <button
+                                onClick={markReviewed}
+                                disabled={!allCompleted}
+                                className={[
+                                    "mb-2 inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2",
+                                    allCompleted
+                                        ? "bg-green-600 text-white hover:bg-green-700 focus:ring-green-400"
+                                        : "bg-gray-300 text-gray-600 cursor-not-allowed focus:ring-gray-300",
+                                ].join(" ")}
+                                title={
+                                    allCompleted
+                                        ? "Mark Orientation as Reviewed"
+                                        : "All items must be Completed before review"
+                                }
+                            >
+                                ✔ Mark Orientation as Reviewed
+                            </button>
+                        </div>
+                    )}
+
                     {error ? (
                         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                             {error}
                         </div>
                     ) : null}
 
-                    {empty && (
+                    {empty ? (
                         <div className="relative z-20 rounded-lg border border-gray-200 bg-gray-50 p-6">
                             {canEdit ? (
                                 <>
@@ -522,24 +695,22 @@ export default function EmployeeDetailPage() {
                                 <p className="text-gray-600">Orientation tasks have not been released yet.</p>
                             )}
                         </div>
-                    )}
-
-                    {!empty && (
+                    ) : (
                         <div className="relative z-10 grid gap-4 lg:grid-cols-2">
                             <SectionCard
                                 title="General Orientation"
-                                subtitle={`Core onboarding items — ${employee.role}`}
+                                subtitle={`Core onboarding items — ${roleForDisplay}`}
                                 items={general}
                                 canEdit={canEdit}
-                                onToggleItem={handleToggleItem}
+                                onSetStatus={handleSetStatus}
                                 savingIds={savingIds}
                             />
                             <SectionCard
                                 title="Department Orientation"
-                                subtitle={`Role-specific items — ${employee.role}`}
+                                subtitle={`Role-specific items — ${roleForDisplay}`}
                                 items={department}
                                 canEdit={canEdit}
-                                onToggleItem={handleToggleItem}
+                                onSetStatus={handleSetStatus}
                                 savingIds={savingIds}
                             />
                         </div>
