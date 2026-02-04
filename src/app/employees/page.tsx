@@ -6,10 +6,10 @@
  *     1) POST /api/employees (creates EmployeeProfiles item via Azure Function EmployeeProfileCreate)
  *     2) POST /api/orientation-tracker/release/[employeeId] (OrientationUpdater)
  *
- * Notes:
- * - Role is a SharePoint lookup on EmployeeProfiles.
- * - UI uses a Role dropdown (roleCode like "ASD") and sends roleCode to server.
- * - Azure Function resolves roleCode -> Roles list item id -> stores RoleLookupId.
+ * This page now consumes:
+ *   - GET /api/employees/summary  (proxy → EmployeeListSummary function)
+ * And augments each row with:
+ *   - Released / Status via GET /api/orientation-tracker/[id]
  */
 
 "use client";
@@ -18,18 +18,25 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type EmployeeStatus = "Not Started" | "In Progress" | "Completed" | "Not Released";
+type EmployeeStatus = "Not Released" | "Not Started" | "In Progress" | "Completed";
 
-type EmployeeRow = {
+type SummaryRow = {
     id: string;
-    fields: Record<string, unknown>;
+    name: string;
+    roleCode: string;       // e.g., ASD
+    reviewed: string;       // "Yes" | "No" | "Pending"
+    reviewAudit: string;    // ISO or ""
+    modified: string;
 };
 
 type EmployeeVM = {
     id: string;
     name: string;
-    role: string;
+    role: string;           // "ASD — Administrative Services Director"
+    released: "Yes" | "No";
     status: EmployeeStatus;
+    reviewed: string;
+    reviewAudit: string;
     lastUpdated: string;
 };
 
@@ -39,16 +46,12 @@ function asString(v: unknown): string {
     return String(v);
 }
 
-function toIdString(v: unknown): string {
-    return asString(v).trim();
-}
-
 function StatusBadge({ status }: { status: EmployeeStatus }) {
     const styles: Record<EmployeeStatus, string> = {
         "Not Released": "bg-gray-100 text-gray-700 ring-1 ring-gray-200",
         "Not Started": "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
         "In Progress": "bg-amber-100 text-amber-800 ring-1 ring-amber-200",
-        Completed: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
+        "Completed": "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
     };
 
     return (
@@ -134,21 +137,22 @@ const ROLE_OPTIONS: Array<{ code: string; name: string }> = [
     { code: "RWD", name: "Resident Wellness Director" },
     { code: "SME", name: "Safety & Maintenance Engineering" },
 ];
+const ROLE_NAME_BY_CODE = Object.fromEntries(ROLE_OPTIONS.map(r => [r.code, r.name]));
 
 export default function EmployeesPage() {
     const router = useRouter();
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [items, setItems] = useState<EmployeeRow[]>([]);
+    const [rows, setRows] = useState<SummaryRow[]>([]);
 
-    // Session-only: mark ids we released during this session
+    // Session-only: mark ids we released during this session (optimistic)
     const [releasedIds, setReleasedIds] = useState<Record<string, true>>({});
 
     // Modal state + form fields
     const [modalOpen, setModalOpen] = useState(false);
     const [employeeName, setEmployeeName] = useState("");
-    const [roleCode, setRoleCode] = useState(""); // <-- dropdown value like "ASD"
+    const [roleCode, setRoleCode] = useState(""); // dropdown value like "ASD"
     const [supervisorLookupId, setSupervisorLookupId] = useState("");
     const [startDate, setStartDate] = useState(""); // yyyy-mm-dd
 
@@ -159,24 +163,20 @@ export default function EmployeesPage() {
 
     const createdEmployeeIdRef = useRef<string | null>(null);
 
-    async function fetchEmployees() {
+    async function fetchSummary() {
         setLoading(true);
         setError(null);
-
         try {
-            const res = await fetch("/api/employees", { cache: "no-store" });
+            const res = await fetch("/api/employees/summary", { cache: "no-store" });
             const text = await res.text();
-
             if (!res.ok) {
-                setError(text || `Failed to load employees (${res.status})`);
+                setError(text || `Failed to load summary (${res.status})`);
                 setLoading(false);
                 return;
             }
-
-            const json = JSON.parse(text) as { items?: EmployeeRow[] };
-            const rows = Array.isArray(json.items) ? json.items : [];
-
-            setItems(rows);
+            const json = JSON.parse(text) as { items?: SummaryRow[] };
+            const items = Array.isArray(json.items) ? json.items : [];
+            setRows(items);
             setLoading(false);
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
@@ -188,36 +188,95 @@ export default function EmployeesPage() {
         let cancelled = false;
         (async () => {
             if (cancelled) return;
-            await fetchEmployees();
+            await fetchSummary();
         })();
-        return () => {
-            cancelled = true;
-        };
+        return () => { cancelled = true; };
     }, []);
 
-    const employees: EmployeeVM[] = useMemo(() => {
-        return items.map((r) => {
-            const f = r.fields || {};
+    /** Helper to compute Released/Status by calling your existing tracker endpoint. */
+    async function getReleasedAndStatus(employeeId: string): Promise<{ released: "Yes" | "No"; status: EmployeeStatus }> {
+        try {
+            const res = await fetch(`/api/orientation-tracker/${encodeURIComponent(employeeId)}`, { cache: "no-store" });
+            if (!res.ok) {
+                return { released: releasedIds[employeeId] ? "Yes" : "No", status: releasedIds[employeeId] ? "Not Started" as const : "Not Released" as const };
+            }
+            const json = await res.json();
+            const items = Array.isArray(json.items) ? json.items : [];
 
-            const name =
-                asString(f["Title"]) ||
-                asString(f["EmployeeName"]) ||
-                asString(f["FullName"]) ||
-                `Employee ${r.id}`;
+            if (!items.length) {
+                return { released: releasedIds[employeeId] ? "Yes" : "No", status: releasedIds[employeeId] ? "Not Started" as const : "Not Released" as const };
+            }
 
-            const role =
-                asString(f["RoleName"]) ||
-                asString(f["RoleCode"]) ||
-                asString(f["Role"]) ||
-                asString(f["RoleLookupId"]) ||
-                "—";
+            // Compute aggregate status from fields.Status
+            let anyInProgress = false;
+            let allCompleted = true;
+            let anyStarted = false;
 
-            const lastUpdated = asString(f["Modified"]) || asString(f["LastUpdated"]) || "—";
+            for (const it of items) {
+                const f = it.fields || {};
+                const raw = asString(f["Status"]).toLowerCase();
+                const s = raw === "completed" ? "completed" : raw === "in progress" ? "in_progress" : raw === "not started" ? "not_started" : "not_started";
+                if (s !== "completed") allCompleted = false;
+                if (s !== "not_started") anyStarted = true;
+                if (s === "in_progress") anyInProgress = true;
+            }
 
-            const status: EmployeeStatus = releasedIds[r.id] ? "Not Started" : "Not Released";
-            return { id: r.id, name, role, status, lastUpdated };
+            if (allCompleted) return { released: "Yes", status: "Completed" };
+            if (anyInProgress) return { released: "Yes", status: "In Progress" };
+            if (anyStarted) return { released: "Yes", status: "In Progress" }; // started but not strictly "in_progress"
+            return { released: "Yes", status: "Not Started" };
+        } catch {
+            return { released: releasedIds[employeeId] ? "Yes" : "No", status: releasedIds[employeeId] ? "Not Started" as const : "Not Released" as const };
+        }
+    }
+
+    /** Compose UI rows (memoized) with role mapping; Released/Status are fetched on render. */
+    const baseEmployees = useMemo<EmployeeVM[]>(() => {
+        return rows.map((r) => {
+            const roleName = ROLE_NAME_BY_CODE[r.roleCode] ? `${r.roleCode} — ${ROLE_NAME_BY_CODE[r.roleCode]}` : (r.roleCode || "—");
+            const reviewed = r.reviewed || "Pending";
+            const reviewAudit = r.reviewAudit || "";
+            return {
+                id: r.id,
+                name: r.name,
+                role: roleName,
+                // temp defaults until we compute per-row below
+                released: releasedIds[r.id] ? "Yes" : "No",
+                status: releasedIds[r.id] ? "Not Started" : "Not Released",
+                reviewed,
+                reviewAudit,
+                lastUpdated: r.modified || "—",
+            };
         });
-    }, [items, releasedIds]);
+    }, [rows, releasedIds]);
+
+    // Per-row Released/Status fetching (parallel, lightweight)
+    const [computed, setComputed] = useState<Record<string, { released: "Yes" | "No"; status: EmployeeStatus }>>({});
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            // limit concurrent fetches if you expect a large list; simple batch here
+            const tasks = baseEmployees.map(async (emp) => {
+                const rs = await getReleasedAndStatus(emp.id);
+                return { id: emp.id, ...rs };
+            });
+            const results = await Promise.all(tasks);
+            if (cancelled) return;
+            const map: Record<string, { released: "Yes" | "No"; status: EmployeeStatus }> = {};
+            for (const r of results) {
+                map[r.id] = { released: r.released, status: r.status };
+            }
+            setComputed(map);
+        })();
+        return () => { cancelled = true; };
+    }, [baseEmployees.length]); // re-run when the list length changes
+
+    const employees: EmployeeVM[] = useMemo(() => {
+        return baseEmployees.map((emp) => {
+            const rs = computed[emp.id];
+            return rs ? { ...emp, released: rs.released, status: rs.status } : emp;
+        });
+    }, [baseEmployees, computed]);
 
     function resetModal() {
         setEmployeeName("");
@@ -232,7 +291,7 @@ export default function EmployeesPage() {
 
     function closeModalAndRefresh() {
         setModalOpen(false);
-        fetchEmployees();
+        fetchSummary();
     }
 
     const canSubmit =
@@ -240,15 +299,12 @@ export default function EmployeesPage() {
 
     async function createEmployeeProfile(): Promise<string> {
         const supervisorRaw = supervisorLookupId.trim();
-
-        // Only pass SupervisorLookupId if it's already a numeric SharePoint lookup id.
-        // If the user types a name/email (common), we omit it for now to avoid Azure Function int() errors.
         const supervisorLookupIdSafe =
             supervisorRaw && /^\d+$/.test(supervisorRaw) ? supervisorRaw : null;
 
         const payload = {
             title: employeeName.trim(),
-            roleCode: roleCode.trim(), // <-- send roleCode, server resolves to lookup id
+            roleCode: roleCode.trim(),
             supervisorLookupId: supervisorLookupIdSafe,
             startDate: startDate.trim(),
         };
@@ -260,20 +316,15 @@ export default function EmployeesPage() {
         });
 
         const text = await res.text().catch(() => "");
-        if (!res.ok) {
-            throw new Error(`Create failed (${res.status}): ${text || "No details"}`);
-        }
+        if (!res.ok) throw new Error(`Create failed (${res.status}): ${text || "No details"}`);
 
         const json = text ? JSON.parse(text) : {};
         const id =
-            toIdString(json?.id) ||
-            toIdString(json?.employeeProfileId) ||
-            toIdString(json?.employeeId);
+            asString(json?.id).trim() ||
+            asString(json?.employeeProfileId).trim() ||
+            asString(json?.employeeId).trim();
 
-        if (!id)
-            throw new Error(
-                "Create succeeded but no employee id was returned from POST /api/employees."
-            );
+        if (!id) throw new Error("Create succeeded but no employee id was returned.");
         return id;
     }
 
@@ -281,7 +332,6 @@ export default function EmployeesPage() {
         const res = await fetch(`/api/orientation-tracker/release/${encodeURIComponent(employeeId)}`, {
             method: "POST",
         });
-
         const text = await res.text().catch(() => "");
         if (!res.ok) {
             throw new Error(`Release failed (${res.status}): ${text || "No details"}`);
@@ -297,17 +347,16 @@ export default function EmployeesPage() {
             const newEmployeeId = await createEmployeeProfile();
             createdEmployeeIdRef.current = newEmployeeId;
 
-            // Optimistic row so it appears immediately
-            const optimisticRow: EmployeeRow = {
+            // Optimistic row in UI
+            const optimistic: SummaryRow = {
                 id: newEmployeeId,
-                fields: {
-                    Title: employeeName.trim(),
-                    RoleCode: roleCode.trim(), // display-friendly until SharePoint refresh
-                    SupervisorLookupId: supervisorLookupId.trim() || null,
-                    Date: startDate.trim(),
-                },
+                name: employeeName.trim(),
+                roleCode: roleCode.trim(),
+                reviewed: "Pending",
+                reviewAudit: "",
+                modified: new Date().toISOString(),
             };
-            setItems((prev) => [optimisticRow, ...prev]);
+            setRows((prev) => [optimistic, ...prev]);
 
             await releaseOrientationItems(newEmployeeId);
             setReleasedIds((prev) => ({ ...prev, [newEmployeeId]: true }));
@@ -359,7 +408,10 @@ export default function EmployeesPage() {
                         <tr>
                             <th className="px-4 py-3 text-left">Name</th>
                             <th className="px-4 py-3 text-left">Role</th>
+                            <th className="px-4 py-3 text-left">Released</th>
                             <th className="px-4 py-3 text-left">Status</th>
+                            <th className="px-4 py-3 text-left">Reviewed</th>
+                            <th className="px-4 py-3 text-left">Review Audit</th>
                             <th className="px-4 py-3 text-left">Last Updated</th>
                         </tr>
                     </thead>
@@ -367,7 +419,6 @@ export default function EmployeesPage() {
                     <tbody>
                         {employees.map((emp) => {
                             const href = `/employees/${emp.id}?tab=orientation`;
-
                             return (
                                 <tr
                                     key={emp.id}
@@ -401,17 +452,45 @@ export default function EmployeesPage() {
                                     <td className="px-4 py-3 text-gray-700">{emp.role}</td>
 
                                     <td className="px-4 py-3">
+                                        <span
+                                            className={`inline-flex rounded-full px-2.5 py-1 text-xs ${emp.released === "Yes"
+                                                    ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200"
+                                                    : "bg-gray-100 text-gray-700 ring-1 ring-gray-200"
+                                                }`}
+                                        >
+                                            {emp.released}
+                                        </span>
+                                    </td>
+
+                                    <td className="px-4 py-3">
                                         <StatusBadge status={emp.status} />
                                     </td>
 
-                                    <td className="px-4 py-3 text-gray-500">{emp.lastUpdated}</td>
+                                    <td className="px-4 py-3">
+                                        <span
+                                            className={`inline-flex rounded-full px-2.5 py-1 text-xs ${emp.reviewed === "Yes"
+                                                    ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200"
+                                                    : "bg-gray-100 text-gray-700 ring-1 ring-gray-200"
+                                                }`}
+                                        >
+                                            {emp.reviewed || "Pending"}
+                                        </span>
+                                    </td>
+
+                                    <td className="px-4 py-3 text-gray-700">
+                                        {emp.reviewAudit ? new Date(emp.reviewAudit).toLocaleString() : "—"}
+                                    </td>
+
+                                    <td className="px-4 py-3 text-gray-500">
+                                        {emp.lastUpdated ? new Date(emp.lastUpdated).toLocaleString() : "—"}
+                                    </td>
                                 </tr>
                             );
                         })}
 
                         {!loading && !employees.length && !error ? (
                             <tr>
-                                <td colSpan={4} className="px-4 py-8 text-gray-500">
+                                <td colSpan={7} className="px-4 py-8 text-gray-500">
                                     No employees found in EmployeeProfiles.
                                 </td>
                             </tr>

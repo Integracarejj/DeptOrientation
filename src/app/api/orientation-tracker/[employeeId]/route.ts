@@ -9,7 +9,7 @@ function getRequiredEnv(name: string): string {
     return v;
 }
 
-// Proxy to your Azure Function (keeps secrets out of client)
+// Proxy to your Azure Function
 export async function GET(
     _req: Request,
     { params }: { params: Promise<{ employeeId: string }> }
@@ -17,13 +17,16 @@ export async function GET(
     try {
         const { employeeId } = await params;
 
-        const baseUrl = getRequiredEnv("AZURE_FUNCTION_BASE_URL"); // e.g. https://pyscheduledprocs-...azurewebsites.net
-        const funcCode = getRequiredEnv("AZURE_FUNCTION_CODE");    // function key (your ?code=...)
+        const baseUrl = getRequiredEnv("AZURE_FUNCTION_BASE_URL");
+        const funcCode = getRequiredEnv("AZURE_FUNCTION_CODE");
 
+        // IMPORTANT: use "&code=" not "&amp;code="
         const url =
             `${baseUrl}/api/OrientationTrackerGet` +
             `?employeeProfileId=${encodeURIComponent(employeeId)}` +
             `&code=${encodeURIComponent(funcCode)}`;
+
+        console.log("OrientationTrackerGet →", url);
 
         const res = await fetch(url, { cache: "no-store" });
         const text = await res.text();
@@ -41,6 +44,7 @@ export async function GET(
             employeeId,
             items: Array.isArray(json.items) ? json.items : [],
         });
+
     } catch (e) {
         return NextResponse.json(
             { error: "Unhandled error", message: e instanceof Error ? e.message : String(e) },

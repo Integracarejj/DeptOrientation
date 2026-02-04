@@ -5,16 +5,11 @@ export const dynamic = "force-dynamic";
 
 /**
  * API Route: Employee Detail Proxy
+ * GET /api/employees/[employeeId]
  *
- * Purpose:
- * - Fetch ONE EmployeeProfile by SharePoint list item ID via Azure Function (server-side)
- *
- * Route:
- * - GET /api/employees/[employeeId]
- *
- * Notes:
- * - Next.js 15: params is a Promise in route handlers; must await it.
- * - Azure Function name must match exactly (EmployeeProfileGet vs EmployeeProfilesGet).
+ * Proxies to the Azure Function that returns ONE EmployeeProfiles item:
+ *   EmployeeProfilesGet?employeeProfileId=<id>
+ * (Note the plural function name.)
  */
 
 function getRequiredEnv(name: string): string {
@@ -28,18 +23,21 @@ export async function GET(
     { params }: { params: Promise<{ employeeId: string }> }
 ) {
     try {
-        // ✅ Next.js 15 requires awaiting params before accessing properties
         const { employeeId } = await params;
 
         const baseUrl = getRequiredEnv("AZURE_FUNCTION_BASE_URL");
         const funcCode = getRequiredEnv("AZURE_FUNCTION_CODE");
 
-        // ✅ IMPORTANT: use the function name that exists in your Function App
-        // If your working portal test was EmployeeProfileGet, keep it singular here.
+        // IMPORTANT:
+        //  - Use the plural function name: EmployeeProfilesGet
+        //  - Use '&code=' (NOT '&amp;code=')
         const url =
-            `${baseUrl}/api/EmployeeProfileGet` +
+            `${baseUrl}/api/EmployeeProfilesGet` +
             `?employeeProfileId=${encodeURIComponent(employeeId)}` +
             `&code=${encodeURIComponent(funcCode)}`;
+
+        // One-time debugging to verify the exact host + path being called:
+        console.log("EmployeeProfilesGet (single) →", url);
 
         const res = await fetch(url, { cache: "no-store" });
         const text = await res.text();
@@ -51,6 +49,8 @@ export async function GET(
             );
         }
 
+        // Pass through the function’s JSON. It returns:
+        // { employeeProfileId: <number>, item: { id, fields: {...} } }
         return NextResponse.json(JSON.parse(text));
     } catch (e) {
         return NextResponse.json(
