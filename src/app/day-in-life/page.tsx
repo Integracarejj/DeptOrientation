@@ -1,57 +1,49 @@
 // src/app/day-in-life/page.tsx
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
-// SAME ROLE OPTIONS YOU SHARED
-const ROLE_OPTIONS: Array<{ code: string; name: string }> = [
-    { code: "ASD", name: "Administrative Services Director" },
-    { code: "CRA", name: "Community Relations Associate" },
-    { code: "CRD", name: "Community Relations Director" },
-    { code: "DED", name: "Dining Experience Director" },
-    { code: "EOO", name: "Executive Operations Officer" },
-    { code: "HA", name: "Hospitality Associate" },
-    { code: "HEA", name: "Hospitality Executive Associate" },
-    { code: "LSLS", name: "Dual role - LifeStages/LifeStories" },
-    { code: "LStaD", name: "LifeStages Director" },
-    { code: "LStoD", name: "LifeStories Director" },
-    { code: "MA", name: "Maintenance Assistant" },
-    { code: "RWD", name: "Resident Wellness Director" },
-    { code: "SME", name: "Safety & Maintenance Engineering" },
-];
+export default function DayInLifePage() {
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [payload, setPayload] = useState<string>("");
 
-export default function DayInLifeLandingPage() {
-    const router = useRouter();
+    async function load() {
+        setLoading(true);
+        setError(null);
+        try {
+            // Mirror Employees pattern: client fetch to our server API
+            const res = await fetch("/api/day-in-life/summary", { cache: "no-store" });
+            const text = await res.text();
+            if (!res.ok) {
+                setError(`HTTP ${res.status}\n${text}`);
+                setPayload(text);
+            } else {
+                setPayload(text); // raw JSON on screen (Step 1 proof)
+            }
+        } catch (e: any) {
+            setError(e?.message || "Unknown error");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => { load(); }, []);
 
     return (
-        <div className="px-6 py-10">
-            <h1 className="text-3xl font-semibold text-white mb-2">
-                Day in the Life
-            </h1>
-
-            <p className="text-gray-300 mb-8">
-                Choose a role below to view the Daily, Weekly, Monthly, and Calendar guidance.
+        <main className="p-4 md:p-6">
+            <h1 className="mb-4 text-2xl font-semibold">Day in the Life — Debug</h1>
+            <p className="mb-2 text-sm text-slate-600">
+                Raw JSON returned from <code>/api/day-in-life/summary</code>.
             </p>
 
-            {/* Grid of Role Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {ROLE_OPTIONS.map((role) => (
-                    <button
-                        key={role.code}
-                        onClick={() => router.push(`/day-in-life/${role.code}`)}
-                        className="
-              bg-gray-800 border border-gray-700 hover:border-sky-500
-              hover:bg-gray-750 transition p-5 rounded-lg 
-              text-left shadow-md hover:shadow-sky-600/20
-            "
-                    >
-                        <div className="text-xl font-semibold text-sky-300">
-                            {role.code}
-                        </div>
-                        <div className="mt-1 text-gray-300 text-sm">{role.name}</div>
-                    </button>
-                ))}
-            </div>
-        </div>
+            {loading && <p>Loading…</p>}
+            {error && (
+                <pre className="whitespace-pre-wrap bg-red-900/80 p-3 text-xs text-red-100 rounded">{error}</pre>
+            )}
+            {!loading && (
+                <pre className="whitespace-pre-wrap bg-slate-900 p-3 text-xs text-slate-100 rounded">{payload}</pre>
+            )}
+        </main>
     );
 }

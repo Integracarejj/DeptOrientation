@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     // ---- Target & Libs ----
-    "target": "ES2017",
+    "target": "ES2022",
     "lib": [
       "dom",
       "dom.iterable",
@@ -12,8 +12,11 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "allowJs": true,
+    "allowJs": false,
     "jsx": "react-jsx",
+    "types": [
+      "node"
+    ],
     // ---- Type Safety & Build Perf ----
     "strict": true,
     "skipLibCheck": true,
