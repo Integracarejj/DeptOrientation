@@ -20,20 +20,19 @@ export default function DayInLifePageClient() {
     const [role, setRole] = useState("");
     const [sections, setSections] = useState<SectionsMap>(EMPTY_SECTIONS);
     const [isEditing, setIsEditing] = useState(false);
-
     const snapshotRef = useRef<SectionsMap | null>(null);
 
     async function load() {
-        const res = await fetch(`/api/day-in-life/summary?role=${role}`, {
-            cache: "no-store",
-        });
+        // Fetch ALL once; role filtering happens on the client
+        const res = await fetch(`/api/day-in-life/summary`, { cache: "no-store" });
         const json = await res.json();
         setSections(normalizePayload(json));
     }
 
+    // Mount-only load (do not refetch on role change)
     useEffect(() => {
         load();
-    }, [role]);
+    }, []);
 
     function toggleEdit() {
         if (!isEditing) {
@@ -41,12 +40,14 @@ export default function DayInLifePageClient() {
             setIsEditing(true);
         } else {
             setIsEditing(false);
+            // (Optional) rollback logic could go here if needed
+            // setSections(snapshotRef.current ?? sections);
         }
     }
 
     return (
-        <div className="space-y-6">
-            <div className="flex items-center gap-4">
+        <div className="space-y-4">
+            <div className="flex items-center justify-between">
                 <RolePicker value={role} onChange={setRole} />
                 <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
             </div>

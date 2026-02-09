@@ -1,0 +1,1091 @@
+Background: we are building a Department Orientation web app.  Focusing on Day in the Life page.  I am going to supply you with the critical files tied to this page.  
+
+src/app/day-in-life/components/
+
+Board.tsx:
+import React from "react";
+import SectionColumn from "./SectionColumn";
+import { SectionsMap, SectionKey, DayInLifeItem } from "@/lib/dayInLife/types";
+
+type BoardProps = {
+    sections: SectionsMap;
+    setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
+    isEditing: boolean;
+    role: string; // selected role code ("" means no filter)
+};
+
+export default function Board({ sections, setSections, isEditing, role }: BoardProps) {
+    const filterByRole = (items: DayInLifeItem[]) => {
+        if (!role) return items;                 // no role selected → show all
+        return items.filter(i => i.role === role); // strict match for now
+    };
+
+    return (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {(Object.keys(sections) as SectionKey[]).map((key) => {
+                const original = sections[key] ?? [];
+                const filtered = filterByRole(original);
+                return (
+                    <SectionColumn
+                        key={key}
+                        section={key}
+                        items={filtered}
+                        setSections={setSections}
+                        isEditing={isEditing}
+                    />
+                );
+            })}
+        </div>
+    );
+}
+
+
+EditToolbar.tsx:
+"use client";
+
+export default function EditToolbar({
+    isEditing,
+    onToggle,
+}: {
+    isEditing: boolean;
+    onToggle: () => void;
+}) {
+    return (
+        <button
+            onClick={onToggle}
+            className="ml-auto px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+        >
+            {isEditing ? "Done" : "Edit"}
+        </button>
+    );
+}
+
+ItemRow.tsx:
+import { DayInLifeItem, SectionsMap } from "@/lib/dayInLife/types";
+
+
+type Props = {
+    item: DayInLifeItem;
+    isEditing: boolean;
+    setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
+};
+
+export default function ItemRow({
+    item,
+    isEditing,
+    setSections,
+}: Props) {
+    return (
+        <div className="flex items-center gap-2 py-1">
+            {isEditing ? (
+                <input
+                    value={item.text}
+                    onChange={(e) => {
+                        const val = e.target.value;
+
+                        setSections((prev: SectionsMap) => {
+                            const copy = structuredClone(prev);
+                            const list = copy[item.section];
+                            const target = list.find(
+                                (i: DayInLifeItem) => i.id === item.id
+                            );
+                            if (target) target.text = val;
+                            return copy;
+                        });
+                    }}
+                    className="w-full border rounded px-2 py-1"
+                />
+            ) : (
+                <span>{item.text}</span>
+            )}
+        </div>
+    );
+}
+
+
+RolePicker.tsx:
+"use client";
+
+type RoleOption = { code: string; name: string };
+
+const ROLE_OPTIONS: RoleOption[] = [
+    { code: "ASD", name: "Administrative Services Director" },
+    { code: "CRA", name: "Community Relations Associate" },
+    { code: "CRD", name: "Community Relations Director" },
+    { code: "DED", name: "Dining Experience Director" },
+    { code: "EOO", name: "Executive Operations Officer" },
+    { code: "HA", name: "Hospitality Associate" },
+    { code: "HEA", name: "Hospitality Executive Associate" },
+    { code: "LSLS", name: "Dual role - LifeStages/LifeStories" },
+    { code: "LStaD", name: "LifeStages Director" },
+    { code: "LStoD", name: "LifeStories Director" },
+    { code: "MA", name: "Maintenance Assistant" },
+    { code: "RWD", name: "Resident Wellness Director" },
+    { code: "SME", name: "Safety & Maintenance Engineering" },
+];
+
+export default function RolePicker({
+    value,
+    onChange,
+}: {
+    value: string;
+    onChange: (role: string) => void;
+}) {
+    return (
+        <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            // Closed control styling (Tailwind)
+            className="
+        border border-slate-400 rounded px-2 py-1
+        bg-slate-900 text-slate-100
+        dark:bg-slate-900 dark:text-slate-100
+        focus:outline-none focus:ring-2 focus:ring-blue-500
+      "
+        >
+            <option value="">Select role…</option>
+            {ROLE_OPTIONS.map((r) => (
+                <option key={r.code} value={r.code}>
+                    {r.name}
+                </option>
+            ))}
+        </select>
+    );
+}
+
+
+SectionColumn.tsx:
+"use client";
+
+import React from "react";
+import ItemRow from "./ItemRow";
+import {
+    DayInLifeItem,
+    SectionKey,
+    SectionsMap,
+} from "@/lib/dayInLife/types";
+
+type Props = {
+    section: SectionKey;
+    items: DayInLifeItem[];
+    setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
+    isEditing: boolean;
+};
+
+export default function SectionColumn({
+    section,
+    items,
+    setSections,
+    isEditing,
+}: Props) {
+    return (
+        <div className="border border-slate-300 rounded-md bg-slate-50">
+            {/* Section header */}
+            <div className="px-4 py-2 bg-[#d2d8e0] text-[#191b25] font-semibold border-b border-[#40e0d0]">
+                {section}
+            </div>
+
+            {/* Rows container:
+          Set a readable default text color for everything inside.
+          ItemRow will inherit this unless it overrides text color. */}
+            <div className="divide-y divide-slate-300 text-slate-800">
+                {items.length === 0 && (
+                    <div className="px-4 py-3 italic text-slate-700">
+                        No items
+                    </div>
+                )}
+
+                {items.map((item) => (
+                    <ItemRow
+                        key={item.id}
+                        item={item}
+                        setSections={setSections}
+                        isEditing={isEditing}
+                    />
+
+                ))}
+            </div>
+        </div>
+    );
+}
+
+
+src/app/day-in-life/
+
+DayInLifePageClient.tsx:
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { SectionsMap } from "@/lib/dayInLife/types";
+import RolePicker from "./components/RolePicker";
+import Board from "./components/Board";
+import EditToolbar from "./components/EditToolbar";
+import { normalizePayload } from "@/lib/dayInLife/normalize";
+
+// empty starter shape — avoids null everywhere
+const EMPTY_SECTIONS: SectionsMap = {
+    PriorToStandUp: [],
+    AfterStandUp: [],
+    Calendar: [],
+    ToBeScheduled: [],
+    Other: [],
+};
+
+export default function DayInLifePageClient() {
+    const [role, setRole] = useState("");
+    const [sections, setSections] = useState<SectionsMap>(EMPTY_SECTIONS);
+    const [isEditing, setIsEditing] = useState(false);
+    const snapshotRef = useRef<SectionsMap | null>(null);
+
+    async function load() {
+        // Fetch ALL once; role filtering happens on the client
+        const res = await fetch(`/api/day-in-life/summary`, { cache: "no-store" });
+        const json = await res.json();
+        setSections(normalizePayload(json));
+    }
+
+    // Mount-only load (do not refetch on role change)
+    useEffect(() => {
+        load();
+    }, []);
+
+    function toggleEdit() {
+        if (!isEditing) {
+            snapshotRef.current = structuredClone(sections);
+            setIsEditing(true);
+        } else {
+            setIsEditing(false);
+            // (Optional) rollback logic could go here if needed
+            // setSections(snapshotRef.current ?? sections);
+        }
+    }
+
+    return (
+        <div className="space-y-4">
+            <div className="flex items-center justify-between">
+                <RolePicker value={role} onChange={setRole} />
+                <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
+            </div>
+
+            <Board
+                sections={sections}
+                setSections={setSections}
+                isEditing={isEditing}
+                role={role}
+            />
+        </div>
+    );
+}
+
+
+page.tsx:
+import DayInLifePageClient from "./DayInLifePageClient";
+
+export default function DayInLifePage() {
+    return <DayInLifePageClient />;
+}
+
+
+src/app/
+layout.tsx:
+/**
+ * layout.tsx (Root Layout)
+ * ------------------------------------
+ * PURPOSE:
+ * Root HTML layout for the entire application.
+ *
+ * IMPORTANT:
+ * - This file MUST remain a Server Component
+ * - We delegate all interactive UI to AppShellClient
+ *
+ * WHY:
+ * - Prevents hydration mismatches
+ * - Matches Next.js App Router best practices
+ */
+
+import "./globals.css";
+import { AppShellClient } from "@/components/layout/AppShellClient";
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <AppShellClient>{children}</AppShellClient>
+      </body>
+    </html>
+  );
+}
+
+page.tsx:
+/**
+ * /page.tsx (Home / Landing Page)
+ * ------------------------------------
+ * PURPOSE:
+ * This is the main landing page when a user opens the app
+ * or clicks the "Dept Orientation" home button.
+ *
+ * DESIGN INTENT:
+ * - Feel like a useful dashboard, not a dead end
+ * - Provide clear "where do I go next?" entry points
+ * - Avoid fake metrics until real data exists
+ *
+ * FUTURE STATE:
+ * - Recent activity
+ * - Alerts / overdue items
+ * - Quick stats (counts, trends)
+ *
+ * RIGHT NOW:
+ * - Clear navigation cards for the 4 core areas
+ */
+
+import Link from "next/link";
+
+type HomeCardProps = {
+  title: string;
+  description: string;
+  href: string;
+};
+
+function HomeCard({ title, description, href }: HomeCardProps) {
+  return (
+    <Link
+      href={href}
+      className="group rounded-lg border border-white/10 bg-white/5 p-6 transition hover:border-white/20 hover:bg-white/10"
+    >
+      <h2 className="text-lg font-semibold text-white group-hover:text-indigo-300">
+        {title}
+      </h2>
+      <p className="mt-2 text-sm text-slate-300">{description}</p>
+    </Link>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <div className="space-y-10">
+      {/* Welcome / context */}
+      <section>
+        <h1 className="text-3xl font-bold">Department Orientation</h1>
+        <p className="mt-2 max-w-2xl text-slate-300">
+          Manage employee orientation, role playbooks, and coverage guidance in
+          one place.
+        </p>
+      </section>
+
+      {/* Primary actions */}
+      <section>
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-400">
+          Get started
+        </h2>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <HomeCard
+            title="View Dashboard"
+            description="See overall progress, alerts, and upcoming orientation activity."
+            href="/dashboard"
+          />
+
+          <HomeCard
+            title="Manage Employees"
+            description="Create, review, and track employee orientations and completion status."
+            href="/employees"
+          />
+
+          <HomeCard
+            title="Day in the Life"
+            description="Review or update role-based daily, weekly, and monthly expectations."
+            href="/day-in-life"
+          />
+
+          <HomeCard
+            title="In the Absence Of"
+            description="Prepare coverage plans and handoff guidance when a role is out."
+            href="/in-the-absence"
+          />
+        </div>
+      </section>
+
+      {/* Placeholder for future expansion */}
+      <section className="rounded-lg border border-dashed border-white/10 p-6 text-sm text-slate-400">
+        <strong>Coming next:</strong> recent activity, overdue items, and quick
+        insights will surface here as real data is connected.
+      </section>
+    </div>
+  );
+}
+
+
+src/lib/dayInLife/
+
+diff.ts: empty
+
+normalize.ts:
+import { SectionsMap, SectionKey, DayInLifeItem } from "./types";
+
+const EMPTY: SectionsMap = {
+    PriorToStandUp: [],
+    AfterStandUp: [],
+    Calendar: [],
+    ToBeScheduled: [],
+    Other: [],
+};
+
+export function normalizePayload(payload: any): SectionsMap {
+    const copy: SectionsMap = structuredClone(EMPTY);
+    const sections = payload?.sections ?? {};
+
+    (Object.entries(sections) as [SectionKey, any[]][])
+        .forEach(([key, items]) => {
+            copy[key] = items.map((i): DayInLifeItem => ({
+                id: String(i.id),
+                text: String(i.text ?? ""),
+                order: Number(i.order ?? 0),
+                active: Boolean(i.active),
+                role: String(i.role ?? ""),   // <-- ensure consistent type for filtering
+                section: key,
+            }));
+        });
+
+    return copy;
+}
+
+
+
+reorder.ts: empty
+
+types.ts:
+// src/lib/dayInLife/types.ts
+
+export type SectionKey =
+    | "PriorToStandUp"
+    | "AfterStandUp"
+    | "Calendar"
+    | "ToBeScheduled"
+    | "Other";
+
+export type DayInLifeItem = {
+    id: string;
+    text: string;
+    order: number;
+    active: boolean;
+    role?: string;       // RoleCode from SharePoint
+    section: SectionKey;
+    isNew?: boolean;
+    isDeleted?: boolean;
+};
+
+// Corrected mapping type
+export type SectionsMap = Record<SectionKey, DayInLifeItem[]>;
+
+
+src/app/api/day-in-life/summary/
+ route.ts:
+
+// src/app/api/day-in-life/summary/route.ts
+import { NextRequest, NextResponse } from "next/server";
+
+export async function GET(_req: NextRequest) {
+    const base = process.env.AZURE_FUNCTION_BASE_URL;
+    const code = process.env.AZURE_FUNCTION_CODE;
+
+    if (!base || !code) {
+        return NextResponse.json(
+            { error: "Missing AZURE_FUNCTION_BASE_URL or AZURE_FUNCTION_CODE" },
+            { status: 500 }
+        );
+    }
+
+    const url = `${base}/api/DayInLifeGet?code=${encodeURIComponent(code)}`;
+    console.log("[DIL summary] →", url);
+
+    const res = await fetch(url, { cache: "no-store" });
+    const text = await res.text();
+
+    return new Response(text, {
+        status: res.status,
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+
+
+*************************Functions*************************
+
+
+DayInLifeGet:
+ init:
+import json
+import os
+import logging
+import requests
+import azure.functions as func
+import html
+
+GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+
+# SITE + LIST IDS
+SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
+LIST_DIL_ID = "df267411-9d03-4997-807d-e9ab24360585"
+
+
+def _get_env(name: str) -> str:
+    v = os.environ.get(name)
+    if not v:
+        raise Exception(f"Missing env var: {name}")
+    return v
+
+
+def _get_token() -> str:
+    tenant_id = _get_env("AppRegTenantID")
+    client_id = _get_env("AppRegClientID")
+    client_secret = _get_env("AppRegSecretValue")
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    data = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "client_credentials",
+        "scope": "https://graph.microsoft.com/.default",
+    }
+    r = requests.post(token_url, data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+def _headers(token: str, prefer_nonindexed: bool = False):
+    h = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if prefer_nonindexed:
+        h["Prefer"] = "HonorNonIndexedQueriesWarningMayFailRandomly"
+    return h
+
+
+def _query_items(token: str, site_id: str, list_id: str, filter_expr: str = None, top: int = 999, prefer_nonindexed: bool = False) -> list:
+    url = f"{GRAPH_ROOT}/sites/{site_id}/lists/{list_id}/items?$expand=fields&$top={top}"
+    if filter_expr:
+        url += f"&$filter={filter_expr}"
+    items = []
+    while url:
+        r = requests.get(url, headers=_headers(
+            token, prefer_nonindexed=prefer_nonindexed), timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        items.extend(data.get("value", []))
+        url = data.get("@odata.nextLink")
+    return items
+
+
+def _shape_sections(items: list, role: str):
+    sections = {
+        "PriorToStandUp": [],
+        "AfterStandUp": [],
+        "Calendar": [],
+        "ToBeScheduled": [],
+        "Other": []
+    }
+    latest_modified = None
+    for it in items:
+        fields = it.get("fields") or {}
+        section = fields.get("Section", "Other")
+        if section not in sections:
+            section = "Other"
+        sections[section].append({
+            "id": str(it.get("id")),
+            "text": fields.get("Title", ""),
+            "order": fields.get("Order", 0),
+            "active": fields.get("Active", True),
+            "role": fields.get("RoleCode"),
+        })
+        mod = it.get("lastModifiedDateTime") or fields.get("Modified")
+        if mod and (latest_modified is None or mod > latest_modified):
+            latest_modified = mod
+    for s in sections:
+        sections[s].sort(key=lambda x: (x.get("order", 0), int(x["id"])))
+    return {
+        "role": role,
+        "sections": sections,
+        "modified": latest_modified
+    }
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("DayInLifeGet: start")
+    try:
+        if not LIST_DIL_ID or LIST_DIL_ID.startswith("<REPLACE"):
+            return func.HttpResponse(
+                json.dumps(
+                    {"ok": False, "error": "LIST_DIL_ID not set in App Settings"}),
+                status_code=500, mimetype="application/json"
+            )
+
+        token = _get_token()
+        role = (req.params.get("role") or "").strip()
+        # Only filter when role provided; else return all (enables page-load populate)
+        filter_expr = None
+        if role:
+            # NOTE: verify internal names: RoleCode, Active
+            filter_expr = f"(fields/RoleCode eq '{role}') and (fields/Active eq true)"
+
+        items = _query_items(
+            token,
+            SITE_ID,
+            LIST_DIL_ID,
+            filter_expr=filter_expr,
+            top=999,
+            prefer_nonindexed=True,
+        )
+        payload = _shape_sections(items, role or None)
+        payload["ok"] = True
+        payload["count"] = sum(len(v) for v in payload["sections"].values())
+        return func.HttpResponse(json.dumps(payload), status_code=200, mimetype="application/json")
+
+    except requests.HTTPError as e:
+        logging.exception("Graph HTTP error")
+        status = getattr(e.response, "status_code", 500)
+        text = getattr(e.response, "text", "")
+        return func.HttpResponse(
+            json.dumps({"ok": False, "error": "graph_http_error",
+                       "statusCode": status, "responseText": text}),
+            status_code=500, mimetype="application/json"
+        )
+    except Exception as e:
+        logging.exception("Unhandled error in DayInLifeGet")
+        return func.HttpResponse(
+            json.dumps(
+                {"ok": False, "error": "unhandled_exception", "message": str(e)}),
+            status_code=500, mimetype="application/json"
+        )
+
+function.json:
+{
+    "scriptFile": "__init__.py",
+    "bindings": [
+        {
+            "authLevel": "function",
+            "type": "httpTrigger",
+            "direction": "in",
+            "name": "req",
+            "methods": [
+                "get"
+            ],
+            "route": "DayInLifeGet"
+        },
+        {
+            "type": "http",
+            "direction": "out",
+            "name": "$return"
+        }
+    ]
+}
+
+DayInLifeItemCreate:
+init:
+import json
+import os
+import logging
+import requests
+import azure.functions as func
+
+GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+
+SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
+LIST_DIL_ID = "<REPLACE-WITH-YOUR-LIST-ID>"
+
+VALID_SECTIONS = {
+    "PriorToStandUp",
+    "AfterStandUp",
+    "Calendar",
+    "ToBeScheduled",
+    "Other"
+}
+
+
+def _get_env(name: str):
+    v = os.environ.get(name)
+    if not v:
+        raise Exception(f"Missing env var: {name}")
+    return v
+
+
+def _get_token():
+    tenant = _get_env("AppRegTenantID")
+    client = _get_env("AppRegClientID")
+    secret = _get_env("AppRegSecretValue")
+    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    data = {
+        "client_id": client,
+        "client_secret": secret,
+        "grant_type": "client_credentials",
+        "scope": "https://graph.microsoft.com/.default",
+    }
+    r = requests.post(token_url, data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+def _headers(token: str):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("DayInLifeItemCreate")
+    try:
+        body = req.get_json()
+    except:
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid JSON"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    role = (body.get("role") or "").strip()
+    section = (body.get("section") or "").strip()
+    text = (body.get("text") or "").strip()
+    order = body.get("order", 1)
+    active = body.get("active", True)
+
+    if not role or not text or not section:
+        return func.HttpResponse(
+            json.dumps({"error": "role, section, text required"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    if section not in VALID_SECTIONS:
+        return func.HttpResponse(
+            json.dumps({"error": f"Invalid section: {section}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    try:
+        order = int(order)
+    except:
+        order = 1
+
+    try:
+        token = _get_token()
+        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items"
+        body = {
+            "fields": {
+                "Title": text,
+                "RoleCode": role,
+                "Section": section,
+                "Order": order,
+                "Active": bool(active)
+            }
+        }
+
+        r = requests.post(url, headers=_headers(token),
+                          data=json.dumps(body), timeout=30)
+        r.raise_for_status()
+        data = r.json()
+
+        resp = {
+            "id": str(data.get("id")),
+            "text": text,
+            "role": role,
+            "section": section,
+            "order": order,
+            "active": active
+        }
+
+        return func.HttpResponse(json.dumps(resp), status_code=201, mimetype="application/json")
+
+    except Exception as e:
+        logging.exception("Unhandled error in create")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+
+function.json:
+{
+    "bindings": [
+        {
+            "authLevel": "function",
+            "type": "httpTrigger",
+            "direction": "in",
+            "name": "req",
+            "methods": [
+                "post"
+            ],
+            "route": "DayInLifeItemCreate"
+        },
+        {
+            "type": "http",
+            "direction": "out",
+            "name": "res"
+        }
+    ]
+}
+
+
+DayInLifeItemDelete:
+init:
+import json
+import os
+import logging
+import requests
+import azure.functions as func
+
+GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+
+SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
+LIST_DIL_ID = "<REPLACE-WITH-YOUR-LIST-ID>"
+
+
+def _get_env(name: str):
+    v = os.environ.get(name)
+    if not v:
+        raise Exception(f"Missing env var: {name}")
+    return v
+
+
+def _get_token():
+    tenant = _get_env("AppRegTenantID")
+    client = _get_env("AppRegClientID")
+    secret = _get_env("AppRegSecretValue")
+    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    data = {
+        "client_id": client,
+        "client_secret": secret,
+        "grant_type": "client_credentials",
+        "scope": "https://graph.microsoft.com/.default",
+    }
+    r = requests.post(token_url, data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+def _headers(token: str):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("DayInLifeItemDelete")
+    itemId = req.route_params.get("itemId")
+    if not itemId:
+        return func.HttpResponse(
+            json.dumps({"error": "Missing itemId"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    try:
+        token = _get_token()
+        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items/{itemId}/fields"
+        body = {"Active": False}
+
+        r = requests.patch(url, headers=_headers(
+            token), data=json.dumps(body), timeout=30)
+        r.raise_for_status()
+
+        return func.HttpResponse(status_code=204)
+
+    except Exception as e:
+        logging.exception("Delete error")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+
+function.json:
+{
+    "bindings": [
+        {
+            "authLevel": "function",
+            "type": "httpTrigger",
+            "direction": "in",
+            "name": "req",
+            "methods": [
+                "delete"
+            ],
+            "route": "DayInLifeItemDelete/{itemId}"
+        },
+        {
+            "type": "http",
+            "direction": "out",
+            "name": "res"
+        }
+    ]
+}
+
+
+DayInLifeItemUpdate:
+init:
+import json
+import os
+import logging
+import requests
+import azure.functions as func
+
+GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+
+SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
+LIST_DIL_ID = "<REPLACE-WITH-YOUR-LIST-ID>"
+
+VALID_SECTIONS = {
+    "PriorToStandUp",
+    "AfterStandUp",
+    "Calendar",
+    "ToBeScheduled",
+    "Other"
+}
+
+
+def _get_env(name: str):
+    v = os.environ.get(name)
+    if not v:
+        raise Exception(f"Missing env var: {name}")
+    return v
+
+
+def _get_token():
+    tenant = _get_env("AppRegTenantID")
+    client = _get_env("AppRegClientID")
+    secret = _get_env("AppRegSecretValue")
+    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    data = {
+        "client_id": client,
+        "client_secret": secret,
+        "grant_type": "client_credentials",
+        "scope": "https://graph.microsoft.com/.default",
+    }
+    r = requests.post(token_url, data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+def _headers(token: str):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("DayInLifeItemUpdate")
+    itemId = req.route_params.get("itemId")
+    if not itemId:
+        return func.HttpResponse(
+            json.dumps({"error": "Missing itemId"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    try:
+        body = req.get_json()
+    except:
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid JSON"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    fields_update = {}
+
+    if "text" in body:
+        fields_update["Title"] = body["text"].strip()
+
+    if "section" in body:
+        sec = body["section"].strip()
+        if sec not in VALID_SECTIONS:
+            return func.HttpResponse(
+                json.dumps({"error": f"Invalid section: {sec}"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        fields_update["Section"] = sec
+
+    if "order" in body:
+        try:
+            fields_update["Order"] = int(body["order"])
+        except:
+            return func.HttpResponse(
+                json.dumps({"error": "Order must be integer"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+
+    if "active" in body:
+        fields_update["Active"] = bool(body["active"])
+
+    if not fields_update:
+        return func.HttpResponse(
+            json.dumps({"error": "No valid fields provided"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    try:
+        token = _get_token()
+        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items/{itemId}/fields"
+
+        r = requests.patch(url, headers=_headers(
+            token), data=json.dumps(fields_update), timeout=30)
+        r.raise_for_status()
+
+        resp = {"id": itemId}
+        resp.update(fields_update)
+
+        return func.HttpResponse(json.dumps(resp), status_code=200, mimetype="application/json")
+
+    except Exception as e:
+        logging.exception("Unhandled update error")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+
+function.json:
+{
+    "bindings": [
+        {
+            "authLevel": "function",
+            "type": "httpTrigger",
+            "direction": "in",
+            "name": "req",
+            "methods": [
+                "patch"
+            ],
+            "route": "DayInLifeItemUpdate/{itemId}"
+        },
+        {
+            "type": "http",
+            "direction": "out",
+            "name": "res"
+        }
+    ]
+}
+
+
+
+
+
+
+
+
+
+

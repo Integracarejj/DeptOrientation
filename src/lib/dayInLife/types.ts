@@ -12,10 +12,11 @@ export type DayInLifeItem = {
     text: string;
     order: number;
     active: boolean;
-    role?: string;
+    role?: string;       // RoleCode from SharePoint
     section: SectionKey;
     isNew?: boolean;
     isDeleted?: boolean;
 };
 
+// Corrected mapping type
 export type SectionsMap = Record<SectionKey, DayInLifeItem[]>;

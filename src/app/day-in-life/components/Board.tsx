@@ -1,31 +1,35 @@
 import React from "react";
 import SectionColumn from "./SectionColumn";
-import { SectionsMap, SectionKey } from "@/lib/dayInLife/types";
+import { SectionsMap, SectionKey, DayInLifeItem } from "@/lib/dayInLife/types";
 
 type BoardProps = {
     sections: SectionsMap;
     setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
     isEditing: boolean;
-    role: string; // ✅ add role to props
+    role: string; // selected role code ("" means no filter)
 };
 
-export default function Board({
-    sections,
-    setSections,
-    isEditing,
-    role, // ✅ destructure role
-}: BoardProps) {
+export default function Board({ sections, setSections, isEditing, role }: BoardProps) {
+    const filterByRole = (items: DayInLifeItem[]) => {
+        if (!role) return items;                 // no role selected → show all
+        return items.filter(i => i.role === role); // strict match for now
+    };
+
     return (
-        <div className="flex flex-col gap-6">
-            {(Object.keys(sections) as SectionKey[]).map((key) => (
-                <SectionColumn
-                    key={key}                  // React key
-                    section={key}              // SectionKey
-                    items={sections[key]}      // array of items
-                    setSections={setSections}
-                    isEditing={isEditing}
-                />
-            ))}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {(Object.keys(sections) as SectionKey[]).map((key) => {
+                const original = sections[key] ?? [];
+                const filtered = filterByRole(original);
+                return (
+                    <SectionColumn
+                        key={key}
+                        section={key}
+                        items={filtered}
+                        setSections={setSections}
+                        isEditing={isEditing}
+                    />
+                );
+            })}
         </div>
     );
 }
