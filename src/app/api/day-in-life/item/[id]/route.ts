@@ -1,57 +1,82 @@
-// PATCH /api/day-in-life/item/:id → Azure Function: DayInLifeItemUpdate/{itemId}
-// DELETE /api/day-in-life/item/:id → Azure Function: DayInLifeItemDelete/{itemId}
 import { NextRequest } from "next/server";
 
-export async function PATCH(
-    req: NextRequest,
-    { params }: { params: { id: string } }
-) {
-    const base = process.env.AZURE_FUNCTION_BASE_URL;
-    const code = process.env.AZURE_FUNCTION_CODE;
+export const dynamic = "force-dynamic";
 
-    if (!base || !code) {
-        return new Response(
-            JSON.stringify({ error: "Missing AZURE_FUNCTION_BASE_URL or AZURE_FUNCTION_CODE" }),
-            { status: 500 }
-        );
-    }
-
-    const body = await req.json();
-    const url = `${base}/api/DayInLifeItemUpdate/${encodeURIComponent(
-        params.id
-    )}?code=${encodeURIComponent(code)}`;
-
-    const res = await fetch(url, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    });
-
-    const text = await res.text();
-    return new Response(text, {
-        status: res.status,
-        headers: { "Content-Type": "application/json" },
-    });
+function getEnvOrThrow(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing env var: ${name}`);
+    return v;
 }
 
-export async function DELETE(
-    _req: NextRequest,
-    { params }: { params: { id: string } }
-) {
-    const base = process.env.AZURE_FUNCTION_BASE_URL;
-    const code = process.env.AZURE_FUNCTION_CODE;
+async function proxy(req: NextRequest, method: "PATCH" | "DELETE") {
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
 
-    if (!base || !code) {
+    const id = req.nextUrl.pathname.split("/").pop();
+    if (!id) {
+        return new Response(JSON.stringify({ error: "Missing item id" }), {
+            status: 400,
+            headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+    }
+
+    const endpoint =
+        method === "PATCH"
+            ? `${baseUrl}/api/DayInLifeItemUpdate/${encodeURIComponent(id)}`
+            : `${baseUrl}/api/DayInLifeItemDelete/${encodeURIComponent(id)}`;
+
+    const body = method === "PATCH" ? await req.text() : undefined;
+
+    let upstream: Response;
+    try {
+        upstream = await fetch(`${endpoint}?code=${encodeURIComponent(funcKey)}`, {
+            method,
+            headers:
+                method === "PATCH"
+                    ? {
+                        "Content-Type": req.headers.get("content-type") ?? "application/json",
+                        "x-functions-key": funcKey,
+                    }
+                    : { "x-functions-key": funcKey },
+            body,
+            cache: "no-store",
+        });
+    } catch (err: any) {
+        console.error(`Proxy ${method} /item/${id} failed:`, err);
         return new Response(
-            JSON.stringify({ error: "Missing AZURE_FUNCTION_BASE_URL or AZURE_FUNCTION_CODE" }),
-            { status: 500 }
+            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
+            {
+                status: 502,
+                headers: { "content-type": "application/json", "cache-control": "no-store" },
+            }
         );
     }
 
-    const url = `${base}/api/DayInLifeItemDelete/${encodeURIComponent(
-        params.id
-    )}?code=${encodeURIComponent(code)}`;
+    // 204 / 205 / 304 must NOT include a body
+    if (upstream.status === 204 || upstream.status === 205 || upstream.status === 304) {
+        return new Response(null, {
+            status: upstream.status,
+            headers: { "cache-control": "no-store" },
+        });
+    }
 
-    const res = await fetch(url, { method: "DELETE" });
-    return new Response(null, { status: res.status });
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") ?? "application/json";
+
+    return new Response(text, {
+        status: upstream.status,
+        headers: {
+            "content-type": contentType,
+            "cache-control": "no-store",
+        },
+    });
+
+}
+
+export async function PATCH(req: NextRequest) {
+    return proxy(req, "PATCH");
+}
+
+export async function DELETE(req: NextRequest) {
+    return proxy(req, "DELETE");
 }

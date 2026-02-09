@@ -65,6 +65,7 @@ export default function EditToolbar({
 
 ItemRow.tsx:
 "use client";
+
 import { DayInLifeItem, SectionsMap } from "@/lib/dayInLife/types";
 
 type Props = {
@@ -78,7 +79,7 @@ export default function ItemRow({ item, isEditing, setSections, onDelete }: Prop
     const updateText = (val: string) => {
         setSections((prev: SectionsMap) => {
             const copy = structuredClone(prev);
-            const list = copy[item.section];
+            const list = copy[item.section] ?? [];
             const target = list.find((i: DayInLifeItem) => i.id === item.id);
             if (target) target.text = val;
             return copy;
@@ -86,23 +87,20 @@ export default function ItemRow({ item, isEditing, setSections, onDelete }: Prop
     };
 
     return (
-        <div className="flex items-start gap-2 py-1">
+        <div className="group flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 shadow-sm hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700">
             {isEditing ? (
                 <>
                     <input
                         value={item.text}
                         onChange={(e) => updateText(e.target.value)}
-                        className="w-full border rounded px-2 py-1
-                       border-slate-300 bg-white text-slate-900
-                       focus:outline-none focus:ring-2 focus:ring-blue-500
-                       dark:bg-slate-900 dark:text-slate-100 dark:border-slate-600"
+                        className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                         placeholder="Type item…"
+                        aria-label="Item text"
                     />
                     <button
                         type="button"
                         onClick={() => onDelete(item.id)}
-                        className="text-xs px-2 py-1 rounded border border-red-500 text-red-600 hover:bg-red-50
-                       dark:text-red-300 dark:hover:bg-red-900"
+                        className="rounded border border-red-500 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-400 dark:text-red-300 dark:hover:bg-red-900/30"
                         aria-label="Delete"
                         title="Delete"
                     >
@@ -110,7 +108,9 @@ export default function ItemRow({ item, isEditing, setSections, onDelete }: Prop
                     </button>
                 </>
             ) : (
-                <div className="w-full">{item.text}</div>
+                <div className="w-full whitespace-pre-wrap break-words text-sm text-slate-800 dark:text-slate-100">
+                    {item.text}
+                </div>
             )}
         </div>
     );
@@ -119,6 +119,7 @@ export default function ItemRow({ item, isEditing, setSections, onDelete }: Prop
 
 SectionColumn.tsx:
 "use client";
+
 import React from "react";
 import ItemRow from "./ItemRow";
 import { DayInLifeItem, SectionKey, SectionsMap } from "@/lib/dayInLife/types";
@@ -131,7 +132,13 @@ type Props = {
     role: string;
 };
 
-export default function SectionColumn({ section, items, setSections, isEditing, role }: Props) {
+export default function SectionColumn({
+    section,
+    items,
+    setSections,
+    isEditing,
+    role,
+}: Props) {
     const addItem = () => {
         const nextOrder = (items.reduce((m, i) => Math.max(m, i.order), 0) || 0) + 1;
         const newItem: DayInLifeItem = {
@@ -159,17 +166,20 @@ export default function SectionColumn({ section, items, setSections, isEditing, 
     };
 
     return (
-        <div className="rounded-md border bg-white text-slate-900 border-slate-300 p-3 space-y-2
-                    dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700">
+        <div className="flex min-w-[260px] flex-1 flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             {/* Section header */}
             <div className="flex items-center justify-between">
-                <h3 className="font-semibold">{section}</h3>
+                <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    {section}
+                </h4>
                 {isEditing && (
                     <button
                         type="button"
                         onClick={addItem}
-                        className="text-sm px-2 py-1 rounded border border-slate-300 hover:bg-slate-100
-                       dark:border-slate-600 dark:hover:bg-slate-700"
+                        disabled={!role}
+                        className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 shadow-sm hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                        aria-label="Add item"
+                        title={role ? "Add item" : "Select a role to add items"}
                     >
                         + Add item
                     </button>
@@ -177,11 +187,11 @@ export default function SectionColumn({ section, items, setSections, isEditing, 
             </div>
 
             {/* Rows */}
-            <div>
-                {items.length === 0 && (
-                    <div className="text-sm text-slate-500 dark:text-slate-400 italic py-2">No items</div>
-                )}
+            {items.length === 0 && (
+                <div className="text-xs italic text-slate-500 dark:text-slate-400">No items</div>
+            )}
 
+            <div className="flex flex-col gap-2">
                 {items.map((item) => (
                     <ItemRow
                         key={item.id}
@@ -210,7 +220,7 @@ import EditToolbar from "./components/EditToolbar";
 import { normalizePayload } from "@/lib/dayInLife/normalize";
 import { computeChangeSet } from "@/lib/dayInLife/diff";
 
-// empty starter shape — no Calendar bucket
+// Empty starter shape — "Calendar" intentionally removed
 const EMPTY_SECTIONS: SectionsMap = {
     PriorToStandUp: [],
     AfterStandUp: [],
@@ -223,16 +233,24 @@ export default function DayInLifePageClient() {
     const [sections, setSections] = useState<SectionsMap>(EMPTY_SECTIONS);
     const [isEditing, setIsEditing] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [banner, setBanner] = useState<string | null>(null);
+
     const snapshotRef = useRef<SectionsMap | null>(null);
 
     async function load() {
         const res = await fetch(`/api/day-in-life/summary`, { cache: "no-store" });
+        if (!res.ok) {
+            const body = await res.text();
+            console.error("Failed to load DayInLife summary:", res.status, body);
+            setBanner("We couldn't load the Day in the Life data. See console for details.");
+            return;
+        }
         const json = await res.json();
         setSections(normalizePayload(json));
     }
 
     useEffect(() => {
-        load();
+        void load();
     }, []);
 
     async function saveChangesAndExit() {
@@ -241,7 +259,7 @@ export default function DayInLifePageClient() {
 
         // Guard: creating items requires a selected role
         if (changes.creates.length > 0 && !role) {
-            alert("Select a role before adding new items.");
+            setBanner("Please select a role before adding new items.");
             return;
         }
 
@@ -251,27 +269,30 @@ export default function DayInLifePageClient() {
             changes.deletes.length === 0
         ) {
             setIsEditing(false);
+            setBanner(null);
             return;
         }
 
         try {
             setBusy(true);
+            setBanner("Saving…");
 
-            // Deletes (soft)
+            // 1) Deletes (soft)
             for (const d of changes.deletes) {
                 const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(d.id)}`, {
                     method: "DELETE",
+                    cache: "no-store",
                 });
                 if (!res.ok) {
                     const t = await res.text();
                     console.error("Delete failed:", res.status, t);
-                    throw new Error(`Delete failed (${res.status})`);
+                    throw new Error(`Delete failed (${res.status}): ${t}`);
                 }
             }
 
-            // Updates
+            // 2) Updates
             for (const u of changes.updates) {
-                const body: any = {};
+                const body: Record<string, unknown> = {};
                 if (u.before.text !== u.after.text) body.text = u.after.text;
                 if (u.before.section !== u.after.section) body.section = u.after.section;
                 if (u.before.order !== u.after.order) body.order = u.after.order;
@@ -282,19 +303,20 @@ export default function DayInLifePageClient() {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify(body),
+                        cache: "no-store",
                     });
                     if (!res.ok) {
                         const t = await res.text();
                         console.error("Update failed:", res.status, t);
-                        throw new Error(`Update failed (${res.status})`);
+                        throw new Error(`Update failed (${res.status}): ${t}`);
                     }
                 }
             }
 
-            // Creates
+            // 3) Creates
             for (const c of changes.creates) {
                 const body = {
-                    role: role,              // required by Function
+                    role, // required by Function
                     section: c.section,
                     text: c.text,
                     order: c.order,
@@ -304,20 +326,25 @@ export default function DayInLifePageClient() {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(body),
+                    cache: "no-store",
                 });
                 if (!res.ok) {
                     const t = await res.text();
                     console.error("Create failed:", res.status, t);
-                    throw new Error(`Create failed (${res.status})`);
+                    throw new Error(`Create failed (${res.status}): ${t}`);
                 }
             }
 
             // Reload canonical state from server
             await load();
             setIsEditing(false);
-        } catch (e) {
+            setBanner("Saved.");
+            // Clear success banner after a short delay
+            setTimeout(() => setBanner(null), 1500);
+        } catch (e: unknown) {
             console.error("Save failed", e);
-            alert("We couldn't save your changes. Open the console for details and share the error body if needed.");
+            setBanner("We couldn't save your changes. See console for details.");
+            // keep edit mode so the user can retry or copy out changes
         } finally {
             setBusy(false);
         }
@@ -327,6 +354,7 @@ export default function DayInLifePageClient() {
         if (!isEditing) {
             snapshotRef.current = structuredClone(sections);
             setIsEditing(true);
+            setBanner(null);
         } else {
             // Leaving edit → save
             void saveChangesAndExit();
@@ -334,27 +362,33 @@ export default function DayInLifePageClient() {
     }
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="mx-auto max-w-6xl px-4 py-6">
+            <div className="mb-4 flex items-center justify-between gap-4">
                 <RolePicker value={role} onChange={setRole} />
-                <div className="flex items-center gap-2">
-                    {isEditing && busy && (
-                        <span className="text-xs text-slate-500 dark:text-slate-400">Saving…</span>
-                    )}
-                    <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
-                </div>
+                <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
             </div>
 
-            <Board
-                sections={sections}
-                setSections={setSections}
-                isEditing={isEditing}
-                role={role}
-            />
+            {banner && (
+                <div
+                    role="status"
+                    className="mb-4 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                >
+                    {banner}
+                </div>
+            )}
+
+            <Board sections={sections} setSections={setSections} isEditing={isEditing} role={role} />
+
+            {isEditing && busy && (
+                <div className="pointer-events-none fixed inset-0 z-50 flex items-start justify-center">
+                    <div className="mt-8 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+                        Saving…
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
-
 
 page.tsx:
 import DayInLifePageClient from "./DayInLifePageClient";
@@ -627,6 +661,127 @@ export type DayInLifeItem = {
 // Canonical sections map
 export type SectionsMap = Record<SectionKey, DayInLifeItem[]>;
 
+
+src/app/day-in-life/
+item/[id]/route.ts:
+import { NextRequest } from "next/server";
+
+export const dynamic = "force-dynamic";
+
+function getEnvOrThrow(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing env var: ${name}`);
+    return v;
+}
+
+async function proxy(req: NextRequest, method: "PATCH" | "DELETE") {
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+
+    const id = req.nextUrl.pathname.split("/").pop();
+    if (!id) {
+        return new Response(JSON.stringify({ error: "Missing item id" }), {
+            status: 400,
+            headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+    }
+
+    const endpoint =
+        method === "PATCH"
+            ? `${baseUrl}/api/DayInLifeItemUpdate/${encodeURIComponent(id)}`
+            : `${baseUrl}/api/DayInLifeItemDelete/${encodeURIComponent(id)}`;
+
+    const body = method === "PATCH" ? await req.text() : undefined;
+
+    let upstream: Response;
+    try {
+        upstream = await fetch(`${endpoint}?code=${encodeURIComponent(funcKey)}`, {
+            method,
+            headers:
+                method === "PATCH"
+                    ? {
+                        "Content-Type": req.headers.get("content-type") ?? "application/json",
+                        "x-functions-key": funcKey,
+                    }
+                    : { "x-functions-key": funcKey },
+            body,
+            cache: "no-store",
+        });
+    } catch (err: any) {
+        console.error(`Proxy ${method} /item/${id} failed:`, err);
+        return new Response(
+            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
+            {
+                status: 502,
+                headers: { "content-type": "application/json", "cache-control": "no-store" },
+            }
+        );
+    }
+
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") ?? "application/json";
+    return new Response(text, {
+        status: upstream.status,
+        headers: { "content-type": contentType, "cache-control": "no-store" },
+    });
+}
+
+export async function PATCH(req: NextRequest) {
+    return proxy(req, "PATCH");
+}
+
+export async function DELETE(req: NextRequest) {
+    return proxy(req, "DELETE");
+}
+
+    item/route.ts
+            import { NextRequest } from "next/server";
+
+export const dynamic = "force-dynamic";
+
+function getEnvOrThrow(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing env var: ${name}`);
+    return v;
+}
+
+export async function POST(req: NextRequest) {
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+
+    const url = `${baseUrl}/api/DayInLifeItemCreate`;
+    const body = await req.text(); // pass through exactly
+
+    let upstream: Response;
+    try {
+        upstream = await fetch(`${url}?code=${encodeURIComponent(funcKey)}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": req.headers.get("content-type") ?? "application/json",
+                "x-functions-key": funcKey, // belt & suspenders
+            },
+            body,
+            cache: "no-store",
+        });
+    } catch (err: any) {
+        console.error("Proxy POST /item failed:", err);
+        return new Response(
+            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
+            {
+                status: 502,
+                headers: { "content-type": "application/json", "cache-control": "no-store" },
+            }
+        );
+    }
+
+    // Pass-through body + status
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") ?? "application/json";
+    return new Response(text, {
+        status: upstream.status,
+        headers: { "content-type": contentType, "cache-control": "no-store" },
+    });
+}
 
 *************************Functions*************************
 

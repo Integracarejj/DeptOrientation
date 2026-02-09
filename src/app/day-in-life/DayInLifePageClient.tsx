@@ -8,7 +8,7 @@ import EditToolbar from "./components/EditToolbar";
 import { normalizePayload } from "@/lib/dayInLife/normalize";
 import { computeChangeSet } from "@/lib/dayInLife/diff";
 
-// empty starter shape — no Calendar bucket
+// Empty starter shape — "Calendar" intentionally removed
 const EMPTY_SECTIONS: SectionsMap = {
     PriorToStandUp: [],
     AfterStandUp: [],
@@ -21,16 +21,24 @@ export default function DayInLifePageClient() {
     const [sections, setSections] = useState<SectionsMap>(EMPTY_SECTIONS);
     const [isEditing, setIsEditing] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [banner, setBanner] = useState<string | null>(null);
+
     const snapshotRef = useRef<SectionsMap | null>(null);
 
     async function load() {
         const res = await fetch(`/api/day-in-life/summary`, { cache: "no-store" });
+        if (!res.ok) {
+            const body = await res.text();
+            console.error("Failed to load DayInLife summary:", res.status, body);
+            setBanner("We couldn't load the Day in the Life data. See console for details.");
+            return;
+        }
         const json = await res.json();
         setSections(normalizePayload(json));
     }
 
     useEffect(() => {
-        load();
+        void load();
     }, []);
 
     async function saveChangesAndExit() {
@@ -39,7 +47,7 @@ export default function DayInLifePageClient() {
 
         // Guard: creating items requires a selected role
         if (changes.creates.length > 0 && !role) {
-            alert("Select a role before adding new items.");
+            setBanner("Please select a role before adding new items.");
             return;
         }
 
@@ -49,27 +57,30 @@ export default function DayInLifePageClient() {
             changes.deletes.length === 0
         ) {
             setIsEditing(false);
+            setBanner(null);
             return;
         }
 
         try {
             setBusy(true);
+            setBanner("Saving…");
 
-            // Deletes (soft)
+            // 1) Deletes (soft)
             for (const d of changes.deletes) {
                 const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(d.id)}`, {
                     method: "DELETE",
+                    cache: "no-store",
                 });
                 if (!res.ok) {
                     const t = await res.text();
                     console.error("Delete failed:", res.status, t);
-                    throw new Error(`Delete failed (${res.status})`);
+                    throw new Error(`Delete failed (${res.status}): ${t}`);
                 }
             }
 
-            // Updates
+            // 2) Updates
             for (const u of changes.updates) {
-                const body: any = {};
+                const body: Record<string, unknown> = {};
                 if (u.before.text !== u.after.text) body.text = u.after.text;
                 if (u.before.section !== u.after.section) body.section = u.after.section;
                 if (u.before.order !== u.after.order) body.order = u.after.order;
@@ -80,19 +91,20 @@ export default function DayInLifePageClient() {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify(body),
+                        cache: "no-store",
                     });
                     if (!res.ok) {
                         const t = await res.text();
                         console.error("Update failed:", res.status, t);
-                        throw new Error(`Update failed (${res.status})`);
+                        throw new Error(`Update failed (${res.status}): ${t}`);
                     }
                 }
             }
 
-            // Creates
+            // 3) Creates
             for (const c of changes.creates) {
                 const body = {
-                    role: role,              // required by Function
+                    role, // required by Function
                     section: c.section,
                     text: c.text,
                     order: c.order,
@@ -102,20 +114,25 @@ export default function DayInLifePageClient() {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(body),
+                    cache: "no-store",
                 });
                 if (!res.ok) {
                     const t = await res.text();
                     console.error("Create failed:", res.status, t);
-                    throw new Error(`Create failed (${res.status})`);
+                    throw new Error(`Create failed (${res.status}): ${t}`);
                 }
             }
 
             // Reload canonical state from server
             await load();
             setIsEditing(false);
-        } catch (e) {
+            setBanner("Saved.");
+            // Clear success banner after a short delay
+            setTimeout(() => setBanner(null), 1500);
+        } catch (e: unknown) {
             console.error("Save failed", e);
-            alert("We couldn't save your changes. Open the console for details and share the error body if needed.");
+            setBanner("We couldn't save your changes. See console for details.");
+            // keep edit mode so the user can retry or copy out changes
         } finally {
             setBusy(false);
         }
@@ -125,6 +142,7 @@ export default function DayInLifePageClient() {
         if (!isEditing) {
             snapshotRef.current = structuredClone(sections);
             setIsEditing(true);
+            setBanner(null);
         } else {
             // Leaving edit → save
             void saveChangesAndExit();
@@ -132,23 +150,30 @@ export default function DayInLifePageClient() {
     }
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="mx-auto max-w-6xl px-4 py-6">
+            <div className="mb-4 flex items-center justify-between gap-4">
                 <RolePicker value={role} onChange={setRole} />
-                <div className="flex items-center gap-2">
-                    {isEditing && busy && (
-                        <span className="text-xs text-slate-500 dark:text-slate-400">Saving…</span>
-                    )}
-                    <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
-                </div>
+                <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
             </div>
 
-            <Board
-                sections={sections}
-                setSections={setSections}
-                isEditing={isEditing}
-                role={role}
-            />
+            {banner && (
+                <div
+                    role="status"
+                    className="mb-4 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                >
+                    {banner}
+                </div>
+            )}
+
+            <Board sections={sections} setSections={setSections} isEditing={isEditing} role={role} />
+
+            {isEditing && busy && (
+                <div className="pointer-events-none fixed inset-0 z-50 flex items-start justify-center">
+                    <div className="mt-8 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+                        Saving…
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

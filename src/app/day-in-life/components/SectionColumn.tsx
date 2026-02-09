@@ -1,4 +1,5 @@
 "use client";
+
 import React from "react";
 import ItemRow from "./ItemRow";
 import { DayInLifeItem, SectionKey, SectionsMap } from "@/lib/dayInLife/types";
@@ -11,7 +12,13 @@ type Props = {
     role: string;
 };
 
-export default function SectionColumn({ section, items, setSections, isEditing, role }: Props) {
+export default function SectionColumn({
+    section,
+    items,
+    setSections,
+    isEditing,
+    role,
+}: Props) {
     const addItem = () => {
         const nextOrder = (items.reduce((m, i) => Math.max(m, i.order), 0) || 0) + 1;
         const newItem: DayInLifeItem = {
@@ -39,17 +46,20 @@ export default function SectionColumn({ section, items, setSections, isEditing, 
     };
 
     return (
-        <div className="rounded-md border bg-white text-slate-900 border-slate-300 p-3 space-y-2
-                    dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700">
+        <div className="flex min-w-64 flex-1 flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             {/* Section header */}
             <div className="flex items-center justify-between">
-                <h3 className="font-semibold">{section}</h3>
+                <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    {section}
+                </h4>
                 {isEditing && (
                     <button
                         type="button"
                         onClick={addItem}
-                        className="text-sm px-2 py-1 rounded border border-slate-300 hover:bg-slate-100
-                       dark:border-slate-600 dark:hover:bg-slate-700"
+                        disabled={!role}
+                        className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 shadow-sm hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                        aria-label="Add item"
+                        title={role ? "Add item" : "Select a role to add items"}
                     >
                         + Add item
                     </button>
@@ -57,11 +67,11 @@ export default function SectionColumn({ section, items, setSections, isEditing, 
             </div>
 
             {/* Rows */}
-            <div>
-                {items.length === 0 && (
-                    <div className="text-sm text-slate-500 dark:text-slate-400 italic py-2">No items</div>
-                )}
+            {items.length === 0 && (
+                <div className="text-xs italic text-slate-500 dark:text-slate-400">No items</div>
+            )}
 
+            <div className="flex flex-col gap-2">
                 {items.map((item) => (
                     <ItemRow
                         key={item.id}

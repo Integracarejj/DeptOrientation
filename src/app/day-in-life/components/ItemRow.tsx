@@ -1,4 +1,5 @@
 "use client";
+
 import { DayInLifeItem, SectionsMap } from "@/lib/dayInLife/types";
 
 type Props = {
@@ -12,7 +13,7 @@ export default function ItemRow({ item, isEditing, setSections, onDelete }: Prop
     const updateText = (val: string) => {
         setSections((prev: SectionsMap) => {
             const copy = structuredClone(prev);
-            const list = copy[item.section];
+            const list = copy[item.section] ?? [];
             const target = list.find((i: DayInLifeItem) => i.id === item.id);
             if (target) target.text = val;
             return copy;
@@ -20,23 +21,20 @@ export default function ItemRow({ item, isEditing, setSections, onDelete }: Prop
     };
 
     return (
-        <div className="flex items-start gap-2 py-1">
+        <div className="group flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 shadow-sm hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700">
             {isEditing ? (
                 <>
                     <input
                         value={item.text}
                         onChange={(e) => updateText(e.target.value)}
-                        className="w-full border rounded px-2 py-1
-                       border-slate-300 bg-white text-slate-900
-                       focus:outline-none focus:ring-2 focus:ring-blue-500
-                       dark:bg-slate-900 dark:text-slate-100 dark:border-slate-600"
+                        className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
                         placeholder="Type item…"
+                        aria-label="Item text"
                     />
                     <button
                         type="button"
                         onClick={() => onDelete(item.id)}
-                        className="text-xs px-2 py-1 rounded border border-red-500 text-red-600 hover:bg-red-50
-                       dark:text-red-300 dark:hover:bg-red-900"
+                        className="rounded border border-red-500 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-400 dark:text-red-300 dark:hover:bg-red-900/30"
                         aria-label="Delete"
                         title="Delete"
                     >
@@ -44,7 +42,9 @@ export default function ItemRow({ item, isEditing, setSections, onDelete }: Prop
                     </button>
                 </>
             ) : (
-                <div className="w-full">{item.text}</div>
+                <div className="w-full whitespace-pre-wrap wrap-break-word text-sm text-slate-800 dark:text-slate-100">
+                    {item.text}
+                </div>
             )}
         </div>
     );

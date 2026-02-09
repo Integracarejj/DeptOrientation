@@ -1,37 +1,47 @@
-// POST /api/day-in-life/item  →  Azure Function: DayInLifeItemCreate
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+
+export const dynamic = "force-dynamic";
+
+function getEnvOrThrow(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing env var: ${name}`);
+    return v;
+}
 
 export async function POST(req: NextRequest) {
-    const base = process.env.AZURE_FUNCTION_BASE_URL;
-    const code = process.env.AZURE_FUNCTION_CODE;
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
 
-    if (!base || !code) {
-        return NextResponse.json(
-            { error: "Missing AZURE_FUNCTION_BASE_URL or AZURE_FUNCTION_CODE" },
-            { status: 500 }
+    const url = `${baseUrl}/api/DayInLifeItemCreate`;
+    const body = await req.text(); // pass through exactly
+
+    let upstream: Response;
+    try {
+        upstream = await fetch(`${url}?code=${encodeURIComponent(funcKey)}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": req.headers.get("content-type") ?? "application/json",
+                "x-functions-key": funcKey, // belt & suspenders
+            },
+            body,
+            cache: "no-store",
+        });
+    } catch (err: any) {
+        console.error("Proxy POST /item failed:", err);
+        return new Response(
+            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
+            {
+                status: 502,
+                headers: { "content-type": "application/json", "cache-control": "no-store" },
+            }
         );
     }
 
-    const body = await req.json();
-    const url = `${base}/api/DayInLifeItemCreate?code=${encodeURIComponent(code)}`;
-
-    try {
-        const res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-            cache: "no-store",
-        });
-
-        const text = await res.text();
-
-        // Pass through status + body so we can see the real function error in dev tools
-        return new Response(text, {
-            status: res.status,
-            headers: { "Content-Type": "application/json" },
-        });
-    } catch (e: any) {
-        console.error("Create proxy failed", e);
-        return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
-    }
+    // Pass-through body + status
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") ?? "application/json";
+    return new Response(text, {
+        status: upstream.status,
+        headers: { "content-type": contentType, "cache-control": "no-store" },
+    });
 }
