@@ -16,8 +16,8 @@ type BoardProps = {
 
 export default function Board({ sections, setSections, isEditing, role }: BoardProps) {
     const filterByRole = (items: DayInLifeItem[]) => {
-        if (!role) return items;                 // no role selected → show all
-        return items.filter(i => i.role === role); // strict match for now
+        if (!role) return items;
+        return items.filter((i) => i.role === role);
     };
 
     return (
@@ -32,6 +32,7 @@ export default function Board({ sections, setSections, isEditing, role }: BoardP
                         items={filtered}
                         setSections={setSections}
                         isEditing={isEditing}
+                        role={role}
                     />
                 );
             })}
@@ -48,161 +49,147 @@ export default function EditToolbar({
     onToggle,
 }: {
     isEditing: boolean;
-    onToggle: () => void;
+    onToggle: () => void; // when leaving edit, this will save
 }) {
     return (
         <button
+            type="button"
             onClick={onToggle}
-            className="ml-auto px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+            className="px-3 py-1 rounded border border-slate-500 hover:bg-slate-700"
         >
             {isEditing ? "Done" : "Edit"}
         </button>
     );
 }
 
-ItemRow.tsx:
-import { DayInLifeItem, SectionsMap } from "@/lib/dayInLife/types";
 
+ItemRow.tsx:
+"use client";
+import { DayInLifeItem, SectionsMap } from "@/lib/dayInLife/types";
 
 type Props = {
     item: DayInLifeItem;
     isEditing: boolean;
     setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
+    onDelete: (id: string) => void;
 };
 
-export default function ItemRow({
-    item,
-    isEditing,
-    setSections,
-}: Props) {
-    return (
-        <div className="flex items-center gap-2 py-1">
-            {isEditing ? (
-                <input
-                    value={item.text}
-                    onChange={(e) => {
-                        const val = e.target.value;
+export default function ItemRow({ item, isEditing, setSections, onDelete }: Props) {
+    const updateText = (val: string) => {
+        setSections((prev: SectionsMap) => {
+            const copy = structuredClone(prev);
+            const list = copy[item.section];
+            const target = list.find((i: DayInLifeItem) => i.id === item.id);
+            if (target) target.text = val;
+            return copy;
+        });
+    };
 
-                        setSections((prev: SectionsMap) => {
-                            const copy = structuredClone(prev);
-                            const list = copy[item.section];
-                            const target = list.find(
-                                (i: DayInLifeItem) => i.id === item.id
-                            );
-                            if (target) target.text = val;
-                            return copy;
-                        });
-                    }}
-                    className="w-full border rounded px-2 py-1"
-                />
+    return (
+        <div className="flex items-start gap-2 py-1">
+            {isEditing ? (
+                <>
+                    <input
+                        value={item.text}
+                        onChange={(e) => updateText(e.target.value)}
+                        className="w-full border rounded px-2 py-1
+                       border-slate-300 bg-white text-slate-900
+                       focus:outline-none focus:ring-2 focus:ring-blue-500
+                       dark:bg-slate-900 dark:text-slate-100 dark:border-slate-600"
+                        placeholder="Type item…"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => onDelete(item.id)}
+                        className="text-xs px-2 py-1 rounded border border-red-500 text-red-600 hover:bg-red-50
+                       dark:text-red-300 dark:hover:bg-red-900"
+                        aria-label="Delete"
+                        title="Delete"
+                    >
+                        Delete
+                    </button>
+                </>
             ) : (
-                <span>{item.text}</span>
+                <div className="w-full">{item.text}</div>
             )}
         </div>
     );
 }
 
 
-RolePicker.tsx:
-"use client";
-
-type RoleOption = { code: string; name: string };
-
-const ROLE_OPTIONS: RoleOption[] = [
-    { code: "ASD", name: "Administrative Services Director" },
-    { code: "CRA", name: "Community Relations Associate" },
-    { code: "CRD", name: "Community Relations Director" },
-    { code: "DED", name: "Dining Experience Director" },
-    { code: "EOO", name: "Executive Operations Officer" },
-    { code: "HA", name: "Hospitality Associate" },
-    { code: "HEA", name: "Hospitality Executive Associate" },
-    { code: "LSLS", name: "Dual role - LifeStages/LifeStories" },
-    { code: "LStaD", name: "LifeStages Director" },
-    { code: "LStoD", name: "LifeStories Director" },
-    { code: "MA", name: "Maintenance Assistant" },
-    { code: "RWD", name: "Resident Wellness Director" },
-    { code: "SME", name: "Safety & Maintenance Engineering" },
-];
-
-export default function RolePicker({
-    value,
-    onChange,
-}: {
-    value: string;
-    onChange: (role: string) => void;
-}) {
-    return (
-        <select
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            // Closed control styling (Tailwind)
-            className="
-        border border-slate-400 rounded px-2 py-1
-        bg-slate-900 text-slate-100
-        dark:bg-slate-900 dark:text-slate-100
-        focus:outline-none focus:ring-2 focus:ring-blue-500
-      "
-        >
-            <option value="">Select role…</option>
-            {ROLE_OPTIONS.map((r) => (
-                <option key={r.code} value={r.code}>
-                    {r.name}
-                </option>
-            ))}
-        </select>
-    );
-}
-
-
 SectionColumn.tsx:
 "use client";
-
 import React from "react";
 import ItemRow from "./ItemRow";
-import {
-    DayInLifeItem,
-    SectionKey,
-    SectionsMap,
-} from "@/lib/dayInLife/types";
+import { DayInLifeItem, SectionKey, SectionsMap } from "@/lib/dayInLife/types";
 
 type Props = {
     section: SectionKey;
     items: DayInLifeItem[];
     setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
     isEditing: boolean;
+    role: string;
 };
 
-export default function SectionColumn({
-    section,
-    items,
-    setSections,
-    isEditing,
-}: Props) {
+export default function SectionColumn({ section, items, setSections, isEditing, role }: Props) {
+    const addItem = () => {
+        const nextOrder = (items.reduce((m, i) => Math.max(m, i.order), 0) || 0) + 1;
+        const newItem: DayInLifeItem = {
+            id: `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            text: "",
+            order: nextOrder,
+            active: true,
+            role,
+            section,
+            isNew: true,
+        };
+        setSections((prev) => {
+            const copy: SectionsMap = structuredClone(prev);
+            copy[section] = [...(copy[section] ?? []), newItem];
+            return copy;
+        });
+    };
+
+    const removeItem = (id: string) => {
+        setSections((prev) => {
+            const copy: SectionsMap = structuredClone(prev);
+            copy[section] = (copy[section] ?? []).filter((i) => i.id !== id);
+            return copy;
+        });
+    };
+
     return (
-        <div className="border border-slate-300 rounded-md bg-slate-50">
+        <div className="rounded-md border bg-white text-slate-900 border-slate-300 p-3 space-y-2
+                    dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700">
             {/* Section header */}
-            <div className="px-4 py-2 bg-[#d2d8e0] text-[#191b25] font-semibold border-b border-[#40e0d0]">
-                {section}
+            <div className="flex items-center justify-between">
+                <h3 className="font-semibold">{section}</h3>
+                {isEditing && (
+                    <button
+                        type="button"
+                        onClick={addItem}
+                        className="text-sm px-2 py-1 rounded border border-slate-300 hover:bg-slate-100
+                       dark:border-slate-600 dark:hover:bg-slate-700"
+                    >
+                        + Add item
+                    </button>
+                )}
             </div>
 
-            {/* Rows container:
-          Set a readable default text color for everything inside.
-          ItemRow will inherit this unless it overrides text color. */}
-            <div className="divide-y divide-slate-300 text-slate-800">
+            {/* Rows */}
+            <div>
                 {items.length === 0 && (
-                    <div className="px-4 py-3 italic text-slate-700">
-                        No items
-                    </div>
+                    <div className="text-sm text-slate-500 dark:text-slate-400 italic py-2">No items</div>
                 )}
 
                 {items.map((item) => (
                     <ItemRow
                         key={item.id}
                         item={item}
-                        setSections={setSections}
                         isEditing={isEditing}
+                        setSections={setSections}
+                        onDelete={removeItem}
                     />
-
                 ))}
             </div>
         </div>
@@ -221,12 +208,12 @@ import RolePicker from "./components/RolePicker";
 import Board from "./components/Board";
 import EditToolbar from "./components/EditToolbar";
 import { normalizePayload } from "@/lib/dayInLife/normalize";
+import { computeChangeSet } from "@/lib/dayInLife/diff";
 
-// empty starter shape — avoids null everywhere
+// empty starter shape — no Calendar bucket
 const EMPTY_SECTIONS: SectionsMap = {
     PriorToStandUp: [],
     AfterStandUp: [],
-    Calendar: [],
     ToBeScheduled: [],
     Other: [],
 };
@@ -235,28 +222,114 @@ export default function DayInLifePageClient() {
     const [role, setRole] = useState("");
     const [sections, setSections] = useState<SectionsMap>(EMPTY_SECTIONS);
     const [isEditing, setIsEditing] = useState(false);
+    const [busy, setBusy] = useState(false);
     const snapshotRef = useRef<SectionsMap | null>(null);
 
     async function load() {
-        // Fetch ALL once; role filtering happens on the client
         const res = await fetch(`/api/day-in-life/summary`, { cache: "no-store" });
         const json = await res.json();
         setSections(normalizePayload(json));
     }
 
-    // Mount-only load (do not refetch on role change)
     useEffect(() => {
         load();
     }, []);
+
+    async function saveChangesAndExit() {
+        const snapshot = snapshotRef.current ?? EMPTY_SECTIONS;
+        const changes = computeChangeSet(snapshot, sections);
+
+        // Guard: creating items requires a selected role
+        if (changes.creates.length > 0 && !role) {
+            alert("Select a role before adding new items.");
+            return;
+        }
+
+        if (
+            changes.creates.length === 0 &&
+            changes.updates.length === 0 &&
+            changes.deletes.length === 0
+        ) {
+            setIsEditing(false);
+            return;
+        }
+
+        try {
+            setBusy(true);
+
+            // Deletes (soft)
+            for (const d of changes.deletes) {
+                const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(d.id)}`, {
+                    method: "DELETE",
+                });
+                if (!res.ok) {
+                    const t = await res.text();
+                    console.error("Delete failed:", res.status, t);
+                    throw new Error(`Delete failed (${res.status})`);
+                }
+            }
+
+            // Updates
+            for (const u of changes.updates) {
+                const body: any = {};
+                if (u.before.text !== u.after.text) body.text = u.after.text;
+                if (u.before.section !== u.after.section) body.section = u.after.section;
+                if (u.before.order !== u.after.order) body.order = u.after.order;
+                if (u.before.active !== u.after.active) body.active = u.after.active;
+
+                if (Object.keys(body).length > 0) {
+                    const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(u.id)}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(body),
+                    });
+                    if (!res.ok) {
+                        const t = await res.text();
+                        console.error("Update failed:", res.status, t);
+                        throw new Error(`Update failed (${res.status})`);
+                    }
+                }
+            }
+
+            // Creates
+            for (const c of changes.creates) {
+                const body = {
+                    role: role,              // required by Function
+                    section: c.section,
+                    text: c.text,
+                    order: c.order,
+                    active: true,
+                };
+                const res = await fetch(`/api/day-in-life/item`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) {
+                    const t = await res.text();
+                    console.error("Create failed:", res.status, t);
+                    throw new Error(`Create failed (${res.status})`);
+                }
+            }
+
+            // Reload canonical state from server
+            await load();
+            setIsEditing(false);
+        } catch (e) {
+            console.error("Save failed", e);
+            alert("We couldn't save your changes. Open the console for details and share the error body if needed.");
+        } finally {
+            setBusy(false);
+        }
+    }
 
     function toggleEdit() {
         if (!isEditing) {
             snapshotRef.current = structuredClone(sections);
             setIsEditing(true);
         } else {
-            setIsEditing(false);
-            // (Optional) rollback logic could go here if needed
-            // setSections(snapshotRef.current ?? sections);
+            // Leaving edit → save
+            void saveChangesAndExit();
         }
     }
 
@@ -264,7 +337,12 @@ export default function DayInLifePageClient() {
         <div className="space-y-4">
             <div className="flex items-center justify-between">
                 <RolePicker value={role} onChange={setRole} />
-                <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
+                <div className="flex items-center gap-2">
+                    {isEditing && busy && (
+                        <span className="text-xs text-slate-500 dark:text-slate-400">Saving…</span>
+                    )}
+                    <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
+                </div>
             </div>
 
             <Board
@@ -284,6 +362,7 @@ import DayInLifePageClient from "./DayInLifePageClient";
 export default function DayInLifePage() {
     return <DayInLifePageClient />;
 }
+
 
 
 src/app/
@@ -419,9 +498,69 @@ export default function HomePage() {
 }
 
 
+
+
 src/lib/dayInLife/
 
-diff.ts: empty
+diff.ts: 
+import { DayInLifeItem, SectionsMap } from "./types";
+
+export type ChangeSet = {
+    creates: DayInLifeItem[];
+    updates: { id: string; before: DayInLifeItem; after: DayInLifeItem }[];
+    deletes: DayInLifeItem[];
+};
+
+function flatten(map: SectionsMap): Record<string, DayInLifeItem> {
+    const byId: Record<string, DayInLifeItem> = {};
+    Object.values(map).forEach((arr) => {
+        (arr ?? []).forEach((it) => {
+            byId[it.id] = it;
+        });
+    });
+    return byId;
+}
+
+function equal(a: DayInLifeItem, b: DayInLifeItem): boolean {
+    return (
+        a.text === b.text &&
+        a.section === b.section &&
+        a.order === b.order &&
+        a.active === b.active
+    );
+}
+
+export function computeChangeSet(prev: SectionsMap, next: SectionsMap): ChangeSet {
+    const before = flatten(prev);
+    const after = flatten(next);
+
+    const creates: DayInLifeItem[] = [];
+    const updates: { id: string; before: DayInLifeItem; after: DayInLifeItem }[] = [];
+    const deletes: DayInLifeItem[] = [];
+
+    // Deletions & updates
+    Object.keys(before).forEach((id) => {
+        const b = before[id];
+        const a = after[id];
+        if (!a) {
+            // existed before, missing now => delete
+            deletes.push(b);
+        } else if (!equal(a, b)) {
+            updates.push({ id, before: b, after: a });
+        }
+    });
+
+    // Creations
+    Object.keys(after).forEach((id) => {
+        if (!before[id]) {
+            creates.push(after[id]);
+        }
+    });
+
+    return { creates, updates, deletes };
+}
+
+
 
 normalize.ts:
 import { SectionsMap, SectionKey, DayInLifeItem } from "./types";
@@ -429,30 +568,38 @@ import { SectionsMap, SectionKey, DayInLifeItem } from "./types";
 const EMPTY: SectionsMap = {
     PriorToStandUp: [],
     AfterStandUp: [],
-    Calendar: [],
     ToBeScheduled: [],
     Other: [],
 };
+
+const KNOWN_SECTIONS = new Set<SectionKey>([
+    "PriorToStandUp",
+    "AfterStandUp",
+    "ToBeScheduled",
+    "Other",
+]);
 
 export function normalizePayload(payload: any): SectionsMap {
     const copy: SectionsMap = structuredClone(EMPTY);
     const sections = payload?.sections ?? {};
 
-    (Object.entries(sections) as [SectionKey, any[]][])
+    (Object.entries(sections) as [string, any[]][])
         .forEach(([key, items]) => {
-            copy[key] = items.map((i): DayInLifeItem => ({
+            // Ignore any "Calendar" bucket coming from the API
+            if (!KNOWN_SECTIONS.has(key as SectionKey)) return;
+
+            copy[key as SectionKey] = (items ?? []).map((i): DayInLifeItem => ({
                 id: String(i.id),
                 text: String(i.text ?? ""),
                 order: Number(i.order ?? 0),
                 active: Boolean(i.active),
-                role: String(i.role ?? ""),   // <-- ensure consistent type for filtering
-                section: key,
+                role: String(i.role ?? ""),
+                section: key as SectionKey,
             }));
         });
 
     return copy;
 }
-
 
 
 reorder.ts: empty
@@ -463,9 +610,8 @@ types.ts:
 export type SectionKey =
     | "PriorToStandUp"
     | "AfterStandUp"
-    | "Calendar"
     | "ToBeScheduled"
-    | "Other";
+    | "Other"; // Removed "Calendar"
 
 export type DayInLifeItem = {
     id: string;
@@ -478,39 +624,8 @@ export type DayInLifeItem = {
     isDeleted?: boolean;
 };
 
-// Corrected mapping type
+// Canonical sections map
 export type SectionsMap = Record<SectionKey, DayInLifeItem[]>;
-
-
-src/app/api/day-in-life/summary/
- route.ts:
-
-// src/app/api/day-in-life/summary/route.ts
-import { NextRequest, NextResponse } from "next/server";
-
-export async function GET(_req: NextRequest) {
-    const base = process.env.AZURE_FUNCTION_BASE_URL;
-    const code = process.env.AZURE_FUNCTION_CODE;
-
-    if (!base || !code) {
-        return NextResponse.json(
-            { error: "Missing AZURE_FUNCTION_BASE_URL or AZURE_FUNCTION_CODE" },
-            { status: 500 }
-        );
-    }
-
-    const url = `${base}/api/DayInLifeGet?code=${encodeURIComponent(code)}`;
-    console.log("[DIL summary] →", url);
-
-    const res = await fetch(url, { cache: "no-store" });
-    const text = await res.text();
-
-    return new Response(text, {
-        status: res.status,
-        headers: { "Content-Type": "application/json" },
-    });
-}
-
 
 
 *************************Functions*************************
@@ -661,6 +776,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 {"ok": False, "error": "unhandled_exception", "message": str(e)}),
             status_code=500, mimetype="application/json"
         )
+
 
 function.json:
 {
@@ -842,9 +958,8 @@ import requests
 import azure.functions as func
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-
 SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
-LIST_DIL_ID = "<REPLACE-WITH-YOUR-LIST-ID>"
+LIST_DIL_ID = "df267411-9d03-4997-807d-e9ab24360585"
 
 
 def _get_env(name: str):
@@ -887,18 +1002,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400,
             mimetype="application/json"
         )
-
     try:
         token = _get_token()
         url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items/{itemId}/fields"
+        # Soft delete: set Active = false
         body = {"Active": False}
-
         r = requests.patch(url, headers=_headers(
             token), data=json.dumps(body), timeout=30)
         r.raise_for_status()
-
         return func.HttpResponse(status_code=204)
-
     except Exception as e:
         logging.exception("Delete error")
         return func.HttpResponse(
@@ -939,14 +1051,12 @@ import requests
 import azure.functions as func
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-
 SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
-LIST_DIL_ID = "<REPLACE-WITH-YOUR-LIST-ID>"
+LIST_DIL_ID = "df267411-9d03-4997-807d-e9ab24360585"
 
 VALID_SECTIONS = {
     "PriorToStandUp",
     "AfterStandUp",
-    "Calendar",
     "ToBeScheduled",
     "Other"
 }
@@ -1003,12 +1113,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     fields_update = {}
-
     if "text" in body:
-        fields_update["Title"] = body["text"].strip()
+        fields_update["Title"] = (body["text"] or "").strip()
 
     if "section" in body:
-        sec = body["section"].strip()
+        sec = (body["section"] or "").strip()
         if sec not in VALID_SECTIONS:
             return func.HttpResponse(
                 json.dumps({"error": f"Invalid section: {sec}"}),
@@ -1040,16 +1149,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
         token = _get_token()
         url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items/{itemId}/fields"
-
         r = requests.patch(url, headers=_headers(
             token), data=json.dumps(fields_update), timeout=30)
         r.raise_for_status()
-
         resp = {"id": itemId}
         resp.update(fields_update)
-
         return func.HttpResponse(json.dumps(resp), status_code=200, mimetype="application/json")
-
     except Exception as e:
         logging.exception("Unhandled update error")
         return func.HttpResponse(

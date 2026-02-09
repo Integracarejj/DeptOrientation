@@ -11,8 +11,8 @@ type BoardProps = {
 
 export default function Board({ sections, setSections, isEditing, role }: BoardProps) {
     const filterByRole = (items: DayInLifeItem[]) => {
-        if (!role) return items;                 // no role selected → show all
-        return items.filter(i => i.role === role); // strict match for now
+        if (!role) return items;
+        return items.filter((i) => i.role === role);
     };
 
     return (
@@ -27,6 +27,7 @@ export default function Board({ sections, setSections, isEditing, role }: BoardP
                         items={filtered}
                         setSections={setSections}
                         isEditing={isEditing}
+                        role={role}
                     />
                 );
             })}

@@ -3,9 +3,8 @@
 export type SectionKey =
     | "PriorToStandUp"
     | "AfterStandUp"
-    | "Calendar"
     | "ToBeScheduled"
-    | "Other";
+    | "Other"; // Removed "Calendar"
 
 export type DayInLifeItem = {
     id: string;
@@ -18,5 +17,5 @@ export type DayInLifeItem = {
     isDeleted?: boolean;
 };
 
-// Corrected mapping type
+// Canonical sections map
 export type SectionsMap = Record<SectionKey, DayInLifeItem[]>;

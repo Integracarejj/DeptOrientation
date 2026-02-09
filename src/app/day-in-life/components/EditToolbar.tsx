@@ -5,12 +5,13 @@ export default function EditToolbar({
     onToggle,
 }: {
     isEditing: boolean;
-    onToggle: () => void;
+    onToggle: () => void; // when leaving edit, this will save
 }) {
     return (
         <button
+            type="button"
             onClick={onToggle}
-            className="ml-auto px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+            className="px-3 py-1 rounded border border-slate-500 hover:bg-slate-700"
         >
             {isEditing ? "Done" : "Edit"}
         </button>
