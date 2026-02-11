@@ -1,217 +1,891 @@
-Background: we are building a Department Orientation web app.  Focusing on Day in the Life page.  I am going to supply you with the critical files tied to this page.  
 
-src/app/day-in-life/components/
 
-Board.tsx:
-import React from "react";
-import SectionColumn from "./SectionColumn";
-import { SectionsMap, SectionKey, DayInLifeItem } from "@/lib/dayInLife/types";
 
-type BoardProps = {
-    sections: SectionsMap;
-    setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
-    isEditing: boolean;
-    role: string; // selected role code ("" means no filter)
-};
+************************** Start of files *******************************
 
-export default function Board({ sections, setSections, isEditing, role }: BoardProps) {
-    const filterByRole = (items: DayInLifeItem[]) => {
-        if (!role) return items;
-        return items.filter((i) => i.role === role);
-    };
+day-in-life files:
 
-    return (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {(Object.keys(sections) as SectionKey[]).map((key) => {
-                const original = sections[key] ?? [];
-                const filtered = filterByRole(original);
-                return (
-                    <SectionColumn
-                        key={key}
-                        section={key}
-                        items={filtered}
-                        setSections={setSections}
-                        isEditing={isEditing}
-                        role={role}
-                    />
-                );
-            })}
-        </div>
-    );
+src/app/day-in-life/days-of-week/[role]/route.ts:
+
+import { NextRequest } from "next/server";
+
+export const dynamic = "force-dynamic";
+
+function getEnvOrThrow(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing env var: ${name}`);
+    return v;
+}
+
+export async function GET(
+    _req: NextRequest,
+    { params }: { params: { role: string } }
+) {
+    const { role } = params;
+
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+
+    const url = `${baseUrl}/api/DaysOfWeekGet/${encodeURIComponent(
+        role
+    )}?code=${encodeURIComponent(funcKey)}`;
+
+    const up = await fetch(url, {
+        cache: "no-store",
+        headers: { "x-functions-key": funcKey },
+    });
+
+    const text = await up.text();
+    return new Response(text, {
+        status: up.status,
+        headers: {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+        },
+    });
+}
+
+export async function PUT(
+    req: NextRequest,
+    { params }: { params: { role: string } }
+) {
+    const { role } = params;
+
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+
+    const url = `${baseUrl}/api/DaysOfWeekPut/${encodeURIComponent(
+        role
+    )}?code=${encodeURIComponent(funcKey)}`;
+
+    const body = await req.text();
+
+    const up = await fetch(url, {
+        method: "PUT",
+        body,
+        cache: "no-store",
+        headers: {
+            "Content-Type": "application/json",
+            "x-functions-key": funcKey,
+        },
+    });
+
+    const text = await up.text();
+    return new Response(text, {
+        status: up.status,
+        headers: {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+        },
+    });
 }
 
 
-EditToolbar.tsx:
+***********************************************
+
+src/app/api/day-in-life/item/[id]/route.ts:
+
+import { NextRequest } from "next/server";
+
+export const dynamic = "force-dynamic";
+
+function getEnvOrThrow(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing env var: ${name}`);
+    return v;
+}
+
+async function proxy(req: NextRequest, method: "PATCH" | "DELETE") {
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+
+    const id = req.nextUrl.pathname.split("/").pop();
+    if (!id) {
+        return new Response(JSON.stringify({ error: "Missing item id" }), {
+            status: 400,
+            headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+    }
+
+    const endpoint =
+        method === "PATCH"
+            ? `${baseUrl}/api/DayInLifeItemUpdate/${encodeURIComponent(id)}`
+            : `${baseUrl}/api/DayInLifeItemDelete/${encodeURIComponent(id)}`;
+
+    const body = method === "PATCH" ? await req.text() : undefined;
+
+    let upstream: Response;
+    try {
+        upstream = await fetch(`${endpoint}?code=${encodeURIComponent(funcKey)}`, {
+            method,
+            headers:
+                method === "PATCH"
+                    ? {
+                        "Content-Type": req.headers.get("content-type") ?? "application/json",
+                        "x-functions-key": funcKey,
+                    }
+                    : { "x-functions-key": funcKey },
+            body,
+            cache: "no-store",
+        });
+    } catch (err: any) {
+        console.error(`Proxy ${method} /item/${id} failed:`, err);
+        return new Response(
+            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
+            {
+                status: 502,
+                headers: { "content-type": "application/json", "cache-control": "no-store" },
+            }
+        );
+    }
+
+    // 204 / 205 / 304 must NOT include a body
+    if (upstream.status === 204 || upstream.status === 205 || upstream.status === 304) {
+        return new Response(null, {
+            status: upstream.status,
+            headers: { "cache-control": "no-store" },
+        });
+    }
+
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") ?? "application/json";
+
+    return new Response(text, {
+        status: upstream.status,
+        headers: {
+            "content-type": contentType,
+            "cache-control": "no-store",
+        },
+    });
+
+}
+
+export async function PATCH(req: NextRequest) {
+    return proxy(req, "PATCH");
+}
+
+export async function DELETE(req: NextRequest) {
+    return proxy(req, "DELETE");
+}
+
+*******************************************
+
+src/app/api/day-in-life/item/route.ts:
+
+import { NextRequest } from "next/server";
+
+export const dynamic = "force-dynamic";
+
+function getEnvOrThrow(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing env var: ${name}`);
+    return v;
+}
+
+export async function POST(req: NextRequest) {
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+
+    const url = `${baseUrl}/api/DayInLifeItemCreate`;
+    const body = await req.text(); // pass through exactly
+
+    let upstream: Response;
+    try {
+        upstream = await fetch(`${url}?code=${encodeURIComponent(funcKey)}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": req.headers.get("content-type") ?? "application/json",
+                "x-functions-key": funcKey, // belt & suspenders
+            },
+            body,
+            cache: "no-store",
+        });
+    } catch (err: any) {
+        console.error("Proxy POST /item failed:", err);
+        return new Response(
+            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
+            {
+                status: 502,
+                headers: { "content-type": "application/json", "cache-control": "no-store" },
+            }
+        );
+    }
+
+    // Pass-through body + status
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") ?? "application/json";
+    return new Response(text, {
+        status: upstream.status,
+        headers: { "content-type": contentType, "cache-control": "no-store" },
+    });
+}
+
+************************************************
+
+src/app/api/day-in-life/summary/route.ts:
+
+// src/app/api/day-in-life/summary/route.ts
+import { NextRequest, NextResponse } from "next/server";
+
+export async function GET(_req: NextRequest) {
+    const base = process.env.AZURE_FUNCTION_BASE_URL;
+    const code = process.env.AZURE_FUNCTION_CODE;
+
+    if (!base || !code) {
+        return NextResponse.json(
+            { error: "Missing AZURE_FUNCTION_BASE_URL or AZURE_FUNCTION_CODE" },
+            { status: 500 }
+        );
+    }
+
+    const url = `${base}/api/DayInLifeGet?code=${encodeURIComponent(code)}`;
+    console.log("[DIL summary] →", url);
+
+    const res = await fetch(url, { cache: "no-store" });
+    const text = await res.text();
+
+    return new Response(text, {
+        status: res.status,
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+
+********************************************
+
+src/app/api/route.ts:
+
+import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/**
+ * API Route: Release Orientation (Generate Tasks) Proxy
+ *
+ * Purpose:
+ * - Supervisor action: generate OrientationTracker tasks for an employee
+ * - Proxies to Azure Function OrientationUpdater (Graph boundary)
+ *
+ * Route:
+ * - POST /api/orientation-tracker/release/[employeeId]
+ *
+ * Behavior:
+ * - Calls OrientationUpdater with employeeProfileId
+ * - Returns function response
+ */
+
+function getRequiredEnv(name: string): string {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing required env var: ${name}`);
+    return v;
+}
+
+export async function POST(
+    _req: Request,
+    { params }: { params: Promise<{ employeeId: string }> }
+) {
+    try {
+        const { employeeId } = await params;
+
+        const baseUrl = getRequiredEnv("AZURE_FUNCTION_BASE_URL");
+        const funcCode = getRequiredEnv("AZURE_FUNCTION_CODE");
+
+        const url =
+            `${baseUrl}/api/OrientationUpdater` +
+            `?employeeProfileId=${encodeURIComponent(employeeId)}` +
+            `&code=${encodeURIComponent(funcCode)}`;
+
+        const res = await fetch(url, { method: "POST", cache: "no-store" });
+        const text = await res.text();
+
+        if (!res.ok) {
+            return NextResponse.json(
+                { error: "Azure Function call failed", status: res.status, details: text },
+                { status: 500 }
+            );
+        }
+
+        return NextResponse.json(JSON.parse(text));
+    } catch (e) {
+        return NextResponse.json(
+            { error: "Unhandled error", message: e instanceof Error ? e.message : String(e) },
+            { status: 500 }
+        );
+    }
+}
+
+**************************************
+
+src/app/day-in-life/components/RolePicker.tsx:
 "use client";
 
-export default function EditToolbar({
-    isEditing,
-    onToggle,
+type RoleOption = { code: string; name: string };
+
+const ROLE_OPTIONS: RoleOption[] = [
+    { code: "ASD", name: "Administrative Services Director" },
+    { code: "CRA", name: "Community Relations Associate" },
+    { code: "CRD", name: "Community Relations Director" },
+    { code: "DED", name: "Dining Experience Director" },
+    { code: "EOO", name: "Executive Operations Officer" },
+    { code: "HA", name: "Hospitality Associate" },
+    { code: "HEA", name: "Hospitality Executive Associate" },
+    { code: "LSLS", name: "Dual role - LifeStages/LifeStories" },
+    { code: "LStaD", name: "LifeStages Director" },
+    { code: "LStoD", name: "LifeStories Director" },
+    { code: "MA", name: "Maintenance Assistant" },
+    { code: "RWD", name: "Resident Wellness Director" },
+    { code: "SME", name: "Safety & Maintenance Engineering" },
+];
+
+export default function RolePicker({
+    value,
+    onChange,
 }: {
-    isEditing: boolean;
-    onToggle: () => void; // when leaving edit, this will save
+    value: string;
+    onChange: (role: string) => void;
 }) {
     return (
-        <button
-            type="button"
-            onClick={onToggle}
-            className="px-3 py-1 rounded border border-slate-500 hover:bg-slate-700"
+        <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="
+                border border-slate-300 rounded px-2 py-1 text-sm
+                bg-white text-slate-900
+                focus:outline-none focus:ring-2 focus:ring-blue-500
+            "
         >
-            {isEditing ? "Done" : "Edit"}
-        </button>
+            <option value="">Select role…</option>
+            {ROLE_OPTIONS.map((r) => (
+                <option key={r.code} value={r.code}>
+                    {r.name}
+                </option>
+            ))}
+        </select>
     );
 }
 
+*****************************************
 
-ItemRow.tsx:
-"use client";
+src/app/day-in-life/days-of-week/[role]/route.ts:
 
-import { DayInLifeItem, SectionsMap } from "@/lib/dayInLife/types";
+// GET => download JSON; PUT => upload new JSON
+import { NextRequest } from "next/server";
 
-type Props = {
-    item: DayInLifeItem;
-    isEditing: boolean;
-    setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
-    onDelete: (id: string) => void;
-};
+export const dynamic = "force-dynamic";
+function getEnvOrThrow(name: string) { const v = process.env[name]; if (!v) throw new Error(`Missing env var: ${name}`); return v; }
 
-export default function ItemRow({ item, isEditing, setSections, onDelete }: Props) {
-    const updateText = (val: string) => {
-        setSections((prev: SectionsMap) => {
-            const copy = structuredClone(prev);
-            const list = copy[item.section] ?? [];
-            const target = list.find((i: DayInLifeItem) => i.id === item.id);
-            if (target) target.text = val;
-            return copy;
-        });
-    };
+export async function GET(_req: NextRequest, { params }: { params: { role: string } }) {
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+    const url = `${baseUrl}/api/DaysOfWeekGet/${encodeURIComponent(params.role)}?code=${encodeURIComponent(funcKey)}`;
+    const up = await fetch(url, { cache: "no-store", headers: { "x-functions-key": funcKey } });
+    const text = await up.text();
+    return new Response(text, { status: up.status, headers: { "content-type": up.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } });
+}
 
-    return (
-        <div className="group flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 shadow-sm hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700">
-            {isEditing ? (
-                <>
-                    <input
-                        value={item.text}
-                        onChange={(e) => updateText(e.target.value)}
-                        className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
-                        placeholder="Type item…"
-                        aria-label="Item text"
-                    />
-                    <button
-                        type="button"
-                        onClick={() => onDelete(item.id)}
-                        className="rounded border border-red-500 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-400 dark:text-red-300 dark:hover:bg-red-900/30"
-                        aria-label="Delete"
-                        title="Delete"
-                    >
-                        Delete
-                    </button>
-                </>
-            ) : (
-                <div className="w-full whitespace-pre-wrap break-words text-sm text-slate-800 dark:text-slate-100">
-                    {item.text}
-                </div>
-            )}
-        </div>
-    );
+export async function PUT(req: NextRequest, { params }: { params: { role: string } }) {
+    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
+    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
+    const url = `${baseUrl}/api/DaysOfWeekPut/${encodeURIComponent(params.role)}?code=${encodeURIComponent(funcKey)}`;
+    const body = await req.text(); // pass-through
+    const up = await fetch(url, { method: "PUT", body, headers: { "Content-Type": "application/json", "x-functions-key": funcKey }, cache: "no-store" });
+    const text = await up.text();
+    return new Response(text, { status: up.status, headers: { "content-type": up.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } });
 }
 
 
-SectionColumn.tsx:
+*****************************************
+
+src/app/day-in-life/days-of-week/components/MatrixEditor.tsx:
+
 "use client";
 
-import React from "react";
-import ItemRow from "./ItemRow";
-import { DayInLifeItem, SectionKey, SectionsMap } from "@/lib/dayInLife/types";
+import { useMemo, useState } from "react";
+import type {
+  DaysOfWeekJson,
+  Weekday,
+  WeekOfMonth,
+  DoWEntry,
+} from "@/lib/daysOfWeek/types"; // plural path per your repo
 
 type Props = {
-    section: SectionKey;
-    items: DayInLifeItem[];
-    setSections: React.Dispatch<React.SetStateAction<SectionsMap>>;
-    isEditing: boolean;
-    role: string;
+  role: string;
+  days: Weekday[];
+  weeks: WeekOfMonth[];
+  /** Controlled model from parent */
+  model: DaysOfWeekJson;
+  /** Parent-driven edit mode (Option A) */
+  isEditing: boolean;
+  /** Parent-provided setter */
+  onChange: (next: DaysOfWeekJson) => void;
+  /** Optional: default collapsed state for top-level Monthly */
+  defaultMonthlyCollapsed?: boolean;
 };
 
-export default function SectionColumn({
-    section,
-    items,
-    setSections,
-    isEditing,
-    role,
+// ✅ Default export is critical for your import style
+export default function MatrixEditor({
+  role,
+  days,
+  weeks,
+  model,
+  isEditing,
+  onChange,
+  defaultMonthlyCollapsed = true,
 }: Props) {
-    const addItem = () => {
-        const nextOrder = (items.reduce((m, i) => Math.max(m, i.order), 0) || 0) + 1;
-        const newItem: DayInLifeItem = {
-            id: `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            text: "",
-            order: nextOrder,
-            active: true,
-            role,
-            section,
-            isNew: true,
-        };
-        setSections((prev) => {
-            const copy: SectionsMap = structuredClone(prev);
-            copy[section] = [...(copy[section] ?? []), newItem];
-            return copy;
-        });
-    };
+  // UI state: top-level "Monthly" collapsed; inner weeks expanded by default
+  const [monthlyOpen, setMonthlyOpen] = useState(!defaultMonthlyCollapsed);
+  const [openWeeks, setOpenWeeks] = useState<Record<WeekOfMonth, boolean>>(
+    () =>
+      weeks.reduce((acc, w) => {
+        acc[w] = true; // inner weeks expanded by default
+        return acc;
+      }, {} as Record<WeekOfMonth, boolean>)
+  );
 
-    const removeItem = (id: string) => {
-        setSections((prev) => {
-            const copy: SectionsMap = structuredClone(prev);
-            copy[section] = (copy[section] ?? []).filter((i) => i.id !== id);
-            return copy;
-        });
-    };
+  const safeModel = useMemo<DaysOfWeekJson>(() => {
+    // normalize missing buckets (non-destructive clone)
+    const next: DaysOfWeekJson = structuredClone(model ?? { version: 1 });
+    next.weekly ??= {};
+    next.monthly ??= {};
+    for (const d of days) {
+      next.weekly[d] ??= [];
+    }
+    for (const w of weeks) {
+      next.monthly[w] ??= {};
+      for (const d of days) {
+        (next.monthly[w] as Record<Weekday, DoWEntry[]>)[d] ??= [];
+      }
+    }
+    return next;
+  }, [model, days, weeks]);
+
+  function update(mutator: (draft: DaysOfWeekJson) => void) {
+    const clone = structuredClone(safeModel);
+    mutator(clone);
+    onChange(clone);
+  }
+
+  function addItem(scope: "weekly" | "monthly", day: Weekday, wk?: WeekOfMonth) {
+    update((draft) => {
+      if (scope === "weekly") {
+        draft.weekly![day]!.push({ id: crypto.randomUUID(), text: "" });
+      } else {
+        draft.monthly![wk!]![day]!.push({ id: crypto.randomUUID(), text: "" });
+      }
+      draft.updatedAt = new Date().toISOString();
+      draft.version = draft.version ?? 1;
+    });
+  }
+
+  function updateEntry(
+    scope: "weekly" | "monthly",
+    day: Weekday,
+    index: number,
+    value: Partial<DoWEntry>,
+    wk?: WeekOfMonth
+  ) {
+    update((draft) => {
+      if (scope === "weekly") {
+        draft.weekly![day]![index] = {
+          ...draft.weekly![day]![index],
+          ...value,
+        };
+      } else {
+        draft.monthly![wk!]![day]![index] = {
+          ...draft.monthly![wk!]![day]![index],
+          ...value,
+        };
+      }
+    });
+  }
+
+  function removeEntry(
+    scope: "weekly" | "monthly",
+    day: Weekday,
+    index: number,
+    wk?: WeekOfMonth
+  ) {
+    update((draft) => {
+      if (scope === "weekly") {
+        draft.weekly![day]!.splice(index, 1);
+      } else {
+        draft.monthly![wk!]![day]!.splice(index, 1);
+      }
+    });
+  }
+
+  // Render only the cell content (div), not a <td>, to avoid nested <td> hydration issues
+  function renderCellContent(
+    scope: "weekly" | "monthly",
+    day: Weekday,
+    wk?: WeekOfMonth
+  ) {
+    const items: DoWEntry[] =
+      scope === "weekly"
+        ? safeModel.weekly?.[day] ?? []
+        : safeModel.monthly?.[wk!]?.[day] ?? [];
 
     return (
-        <div className="flex min-w-[260px] flex-1 flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            {/* Section header */}
-            <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                    {section}
-                </h4>
-                {isEditing && (
-                    <button
-                        type="button"
-                        onClick={addItem}
-                        disabled={!role}
-                        className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 shadow-sm hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        aria-label="Add item"
-                        title={role ? "Add item" : "Select a role to add items"}
-                    >
-                        + Add item
-                    </button>
+      <div className="p-2 min-w-50">
+        {items.length === 0 && (
+          <div className="text-xs text-slate-400 italic">No items</div>
+        )}
+
+        {items.map((entry: DoWEntry, i: number) => (
+          <div
+            key={entry.id ?? `${day}-${wk ?? "weekly"}-${i}`}
+            className="mb-2 space-y-1"
+          >
+            {isEditing ? (
+              <>
+                <input
+                  value={entry.text ?? ""}
+                  onChange={(e) =>
+                    updateEntry(scope, day, i, { text: e.target.value }, wk)
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm bg-white text-slate-900"
+                  placeholder="Task…"
+                  aria-label="Task text"
+                />
+                <input
+                  value={entry.href ?? ""}
+                  onChange={(e) =>
+                    updateEntry(scope, day, i, { href: e.target.value }, wk)
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-xs bg-white text-slate-900"
+                  placeholder="Link (optional)"
+                  aria-label="Task link"
+                />
+                <button
+                  onClick={() => removeEntry(scope, day, i, wk)}
+                  className="rounded border border-red-500 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50"
+                  aria-label="Delete task"
+                >
+                  Delete
+                </button>
+              </>
+            ) : (
+              <div className="text-sm">
+                {entry.href ? (
+                  <a
+                    className="text-indigo-600 underline"
+                    href={entry.href}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {entry.text}
+                  </a>
+                ) : (
+                  entry.text
                 )}
-            </div>
-
-            {/* Rows */}
-            {items.length === 0 && (
-                <div className="text-xs italic text-slate-500 dark:text-slate-400">No items</div>
+              </div>
             )}
+          </div>
+        ))}
 
-            <div className="flex flex-col gap-2">
-                {items.map((item) => (
-                    <ItemRow
-                        key={item.id}
-                        item={item}
-                        isEditing={isEditing}
-                        setSections={setSections}
-                        onDelete={removeItem}
-                    />
-                ))}
-            </div>
-        </div>
+        {isEditing && (
+          <button
+            onClick={() => addItem(scope, day, wk)}
+            className="mt-1 rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+          >
+            + Add
+          </button>
+        )}
+      </div>
     );
+  }
+
+  const weeklyTable = (
+    <section>
+      <h2 className="text-lg font-semibold mb-2">Weekly</h2>
+      <div className="w-full overflow-x-auto">
+        <table className="w-full border-collapse text-sm table-fixed">
+          <thead className="sticky top-0 bg-slate-100">
+            <tr>
+              {days.map((d) => (
+                <th key={d} className="border border-slate-300 px-2 py-1 font-medium">
+                  {d}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {days.map((d) => (
+                <td key={`weekly-${d}`} className="align-top border border-slate-300 p-0">
+                  {renderCellContent("weekly", d)}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+
+  const monthlyTables = (
+    <section>
+      <div className="flex items-center justify-between mt-6 mb-2">
+        <h2 className="text-lg font-semibold">Monthly</h2>
+        <button
+          onClick={() => setMonthlyOpen((v) => !v)}
+          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+          aria-expanded={monthlyOpen}
+          aria-controls="monthly-section"
+        >
+          {monthlyOpen ? "Collapse" : "Expand"}
+        </button>
+      </div>
+
+      <div id="monthly-section" className="space-y-6" hidden={!monthlyOpen}>
+        {weeks.map((wk) => (
+          <div key={wk} className="border rounded-md">
+            <div className="flex items-center justify-between bg-slate-100 px-2 py-1">
+              <div className="font-medium">{wk}</div>
+              <button
+                onClick={() =>
+                  setOpenWeeks((prev) => ({ ...prev, [wk]: !prev[wk] }))
+                }
+                className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs hover:bg-slate-50"
+                aria-expanded={openWeeks[wk]}
+                aria-controls={`week-${wk}`}
+              >
+                {openWeeks[wk] ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            <div id={`week-${wk}`} hidden={!openWeeks[wk]}>
+              <div className="w-full overflow-x-auto">
+                <table className="w-full border-collapse text-sm table-fixed">
+                  <thead className="sticky top-0 bg-slate-100">
+                    <tr>
+                      {days.map((d) => (
+                        <th
+                          key={`${wk}-${d}`}
+                          className="border border-slate-300 px-2 py-1 font-medium"
+                        >
+                          {d}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      {days.map((d) => (
+                        <td
+                          key={`monthly-${wk}-${d}`}
+                          className="align-top border border-slate-300 p-0"
+                        >
+                          {renderCellContent("monthly", d, wk)}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
+  return (
+    <div className="space-y-8">
+      {/* Role context note (view-only) */}
+      <div className="text-xs text-slate-500">
+        {role ? `Role: ${role}` : "Select a role to begin."}
+      </div>
+      {weeklyTable}
+      {monthlyTables}
+    </div>
+  );
+}
+
+*********************************************
+
+src/app/day-in-life/days-of-week/DayOfWeekPageClient.tsx:
+
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DaysOfWeekJson, WeekOfMonth, Weekday } from "@/lib/dayOfWeek/types";
+import { useSearchParams } from "next/navigation";
+import MatrixEditor from "./components/MatrixEditor";
+import RolePicker from "@/app/day-in-life/components/RolePicker";
+import EditToolbar from "@/app/day-in-life/components/EditToolbar";
+
+const WEEKS: WeekOfMonth[] = ["FirstWeek", "SecondWeek", "ThirdWeek", "FourthWeek"];
+const DAYS: Weekday[] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+export default function DaysOfWeekPageClient() {
+  const qs = useSearchParams();
+
+  // role from query string, editable via RolePicker
+  const [role, setRole] = useState(qs.get("role") ?? "");
+  const [data, setData] = useState<DaysOfWeekJson | null>(null);
+
+  // page editing lifecycle
+  const [isEditing, setIsEditing] = useState(false);
+  const snapshotRef = useRef<DaysOfWeekJson | null>(null);
+
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!role) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/day-in-life/days-of-week/${encodeURIComponent(role)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || "Failed to load Days of Week");
+      }
+      const json = (await res.json()) as DaysOfWeekJson;
+      setData(json);
+    } catch (e: any) {
+      setError(`Could not load Days of Week: ${String(e?.message ?? e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [role]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Edit toggle matches DayInLife semantics:
+  // - entering edit: snapshot current canonical model
+  // - leaving edit: save, then reload canonical
+  async function exitEditAndSave() {
+    if (!data) {
+      setIsEditing(false);
+      return;
+    }
+    setBusy(true);
+    setBanner("Saving…");
+    setError(null);
+    try {
+      const res = await fetch(`/api/day-in-life/days-of-week/${encodeURIComponent(role)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...data,
+          updatedAt: new Date().toISOString(),
+          version: typeof data.version === "number" ? data.version : 1,
+        } satisfies DaysOfWeekJson),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || "Save failed");
+      }
+      // After successful save, refetch canonical
+      await load();
+      setBanner("Saved.");
+      setTimeout(() => setBanner(null), 1200);
+    } catch (e: any) {
+      console.error(e);
+      setBanner(null);
+      setError(`Save failed: ${String(e?.message ?? e)}`);
+    } finally {
+      setBusy(false);
+      setIsEditing(false);
+    }
+  }
+
+  function toggleEdit() {
+    if (!isEditing) {
+      snapshotRef.current = data ? structuredClone(data) : null;
+      setBanner(null);
+      setIsEditing(true);
+    } else {
+      void exitEditAndSave();
+    }
+  }
+
+  // Controlled editor handlers
+  const onEditorChange = (next: DaysOfWeekJson) => setData(next);
+
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6 bg-white text-slate-900">
+      {/* Top toolbar: RolePicker (left) and EditToolbar (right) */}
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <RolePicker value={role} onChange={setRole} />
+        <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
+      </div>
+
+      {/* Status banners */}
+      {banner && (
+        <div
+          role="status"
+          className="mb-3 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 shadow-sm"
+        >
+          {banner}
+        </div>
+      )}
+      {error && (
+        <div
+          role="alert"
+          className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {error}
+        </div>
+      )}
+
+      {/* Editor */}
+      {role ? (
+        data ? (
+          <MatrixEditor
+            role={role}
+            days={DAYS}
+            weeks={WEEKS}
+            model={data}
+            isEditing={isEditing}
+            onChange={onEditorChange}
+            defaultMonthlyCollapsed={true}
+          />
+        ) : busy ? (
+          <div className="text-sm text-slate-500">Loading…</div>
+        ) : (
+          <div className="text-sm text-slate-500">No data.</div>
+        )
+      ) : (
+        <div className="text-sm text-slate-500">Select a role to begin.</div>
+      )}
+
+      {/* Non-blocking saving overlay while editing */}
+      {isEditing && busy && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-start justify-center">
+          <div className="mt-8 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-lg">
+            Saving…
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 
-src/app/day-in-life/
+******************************************
 
-DayInLifePageClient.tsx:
+src/app/day-in-life/days-of-week/page.tsx:
+
+import DaysOfWeekPageClient from "./DaysOfWeekPageClient";
+
+export default function DaysOfWeekPage() {
+    return <DaysOfWeekPageClient />;
+}
+
+******************************************
+
+src/app/day-in-life/DayInLifePageClient.tsx:
+
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 import { SectionsMap } from "@/lib/dayInLife/types";
 import RolePicker from "./components/RolePicker";
@@ -219,188 +893,381 @@ import Board from "./components/Board";
 import EditToolbar from "./components/EditToolbar";
 import { normalizePayload } from "@/lib/dayInLife/normalize";
 import { computeChangeSet } from "@/lib/dayInLife/diff";
+import Link from "next/link";
 
 // Empty starter shape — "Calendar" intentionally removed
 const EMPTY_SECTIONS: SectionsMap = {
-    PriorToStandUp: [],
-    AfterStandUp: [],
-    ToBeScheduled: [],
-    Other: [],
+  PriorToStandUp: [],
+  AfterStandUp: [],
+  ToBeScheduled: [],
+  Other: [],
 };
 
 export default function DayInLifePageClient() {
-    const [role, setRole] = useState("");
-    const [sections, setSections] = useState<SectionsMap>(EMPTY_SECTIONS);
-    const [isEditing, setIsEditing] = useState(false);
-    const [busy, setBusy] = useState(false);
-    const [banner, setBanner] = useState<string | null>(null);
+  const [role, setRole] = useState("");
+  const [sections, setSections] = useState<SectionsMap>(EMPTY_SECTIONS);
+  const [isEditing, setIsEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState<string | null>(null);
+  const snapshotRef = useRef<SectionsMap | null>(null);
 
-    const snapshotRef = useRef<SectionsMap | null>(null);
+  // -------------------------
+  // LOAD SUMMARY
+  // -------------------------
+  async function load() {
+    const res = await fetch(`/api/day-in-life/summary`, { cache: "no-store" });
+    if (!res.ok) {
+      const body = await res.text();
+      console.error("Failed to load DayInLife summary:", res.status, body);
+      setBanner("We couldn't load the Day in the Life data. See console for details.");
+      return;
+    }
+    const json = await res.json();
+    setSections(normalizePayload(json));
+  }
+  useEffect(() => {
+    void load();
+  }, []);
 
-    async function load() {
-        const res = await fetch(`/api/day-in-life/summary`, { cache: "no-store" });
+  // -------------------------
+  // SAVE CHANGES
+  // -------------------------
+  async function saveChangesAndExit() {
+    const snapshot = snapshotRef.current ?? EMPTY_SECTIONS;
+    const changes = computeChangeSet(snapshot, sections);
+    // Guard: creating items requires a selected role
+    if (changes.creates.length > 0 && !role) {
+      setBanner("Please select a role before adding new items.");
+      return;
+    }
+    // If no changes → exit edit mode quietly
+    if (
+      changes.creates.length === 0 &&
+      changes.updates.length === 0 &&
+      changes.deletes.length === 0
+    ) {
+      setIsEditing(false);
+      setBanner(null);
+      return;
+    }
+    try {
+      setBusy(true);
+      setBanner("Saving…");
+      // Deletes
+      for (const d of changes.deletes) {
+        const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(d.id)}`, {
+          method: "DELETE",
+          cache: "no-store",
+        });
         if (!res.ok) {
-            const body = await res.text();
-            console.error("Failed to load DayInLife summary:", res.status, body);
-            setBanner("We couldn't load the Day in the Life data. See console for details.");
-            return;
+          const t = await res.text();
+          console.error("Delete failed:", res.status, t);
+          throw new Error(`Delete failed (${res.status}): ${t}`);
         }
-        const json = await res.json();
-        setSections(normalizePayload(json));
+      }
+      // Updates
+      for (const u of changes.updates) {
+        const body: Record<string, unknown> = {};
+        if (u.before.text !== u.after.text) body.text = u.after.text;
+        if (u.before.section !== u.after.section) body.section = u.after.section;
+        if (u.before.order !== u.after.order) body.order = u.after.order;
+        if (u.before.active !== u.after.active) body.active = u.after.active;
+        if (Object.keys(body).length > 0) {
+          const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(u.id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            cache: "no-store",
+          });
+          if (!res.ok) {
+            const t = await res.text();
+            console.error("Update failed:", res.status, t);
+            throw new Error(`Update failed (${res.status}): ${t}`);
+          }
+        }
+      }
+      // Creates
+      for (const c of changes.creates) {
+        const body = {
+          role,
+          section: c.section,
+          text: c.text,
+          order: c.order,
+          active: true,
+        };
+        const res = await fetch(`/api/day-in-life/item`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          const t = await res.text();
+          console.error("Create failed:", res.status, t);
+          throw new Error(`Create failed (${res.status}): ${t}`);
+        }
+      }
+      await load();
+      setIsEditing(false);
+      setBanner("Saved.");
+      setTimeout(() => setBanner(null), 1500);
+    } catch (e: unknown) {
+      console.error("Save failed", e);
+      setBanner("We couldn't save your changes. See console for details.");
+    } finally {
+      setBusy(false);
     }
+  }
 
-    useEffect(() => {
-        void load();
-    }, []);
-
-    async function saveChangesAndExit() {
-        const snapshot = snapshotRef.current ?? EMPTY_SECTIONS;
-        const changes = computeChangeSet(snapshot, sections);
-
-        // Guard: creating items requires a selected role
-        if (changes.creates.length > 0 && !role) {
-            setBanner("Please select a role before adding new items.");
-            return;
-        }
-
-        if (
-            changes.creates.length === 0 &&
-            changes.updates.length === 0 &&
-            changes.deletes.length === 0
-        ) {
-            setIsEditing(false);
-            setBanner(null);
-            return;
-        }
-
-        try {
-            setBusy(true);
-            setBanner("Saving…");
-
-            // 1) Deletes (soft)
-            for (const d of changes.deletes) {
-                const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(d.id)}`, {
-                    method: "DELETE",
-                    cache: "no-store",
-                });
-                if (!res.ok) {
-                    const t = await res.text();
-                    console.error("Delete failed:", res.status, t);
-                    throw new Error(`Delete failed (${res.status}): ${t}`);
-                }
-            }
-
-            // 2) Updates
-            for (const u of changes.updates) {
-                const body: Record<string, unknown> = {};
-                if (u.before.text !== u.after.text) body.text = u.after.text;
-                if (u.before.section !== u.after.section) body.section = u.after.section;
-                if (u.before.order !== u.after.order) body.order = u.after.order;
-                if (u.before.active !== u.after.active) body.active = u.after.active;
-
-                if (Object.keys(body).length > 0) {
-                    const res = await fetch(`/api/day-in-life/item/${encodeURIComponent(u.id)}`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(body),
-                        cache: "no-store",
-                    });
-                    if (!res.ok) {
-                        const t = await res.text();
-                        console.error("Update failed:", res.status, t);
-                        throw new Error(`Update failed (${res.status}): ${t}`);
-                    }
-                }
-            }
-
-            // 3) Creates
-            for (const c of changes.creates) {
-                const body = {
-                    role, // required by Function
-                    section: c.section,
-                    text: c.text,
-                    order: c.order,
-                    active: true,
-                };
-                const res = await fetch(`/api/day-in-life/item`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
-                    cache: "no-store",
-                });
-                if (!res.ok) {
-                    const t = await res.text();
-                    console.error("Create failed:", res.status, t);
-                    throw new Error(`Create failed (${res.status}): ${t}`);
-                }
-            }
-
-            // Reload canonical state from server
-            await load();
-            setIsEditing(false);
-            setBanner("Saved.");
-            // Clear success banner after a short delay
-            setTimeout(() => setBanner(null), 1500);
-        } catch (e: unknown) {
-            console.error("Save failed", e);
-            setBanner("We couldn't save your changes. See console for details.");
-            // keep edit mode so the user can retry or copy out changes
-        } finally {
-            setBusy(false);
-        }
+  // -------------------------
+  // EDIT TOGGLE
+  // -------------------------
+  function toggleEdit() {
+    if (!isEditing) {
+      snapshotRef.current = structuredClone(sections);
+      setIsEditing(true);
+      setBanner(null);
+    } else {
+      void saveChangesAndExit();
     }
+  }
 
-    function toggleEdit() {
-        if (!isEditing) {
-            snapshotRef.current = structuredClone(sections);
-            setIsEditing(true);
-            setBanner(null);
-        } else {
-            // Leaving edit → save
-            void saveChangesAndExit();
-        }
-    }
-
-    return (
-        <div className="mx-auto max-w-6xl px-4 py-6">
-            <div className="mb-4 flex items-center justify-between gap-4">
-                <RolePicker value={role} onChange={setRole} />
-                <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
-            </div>
-
-            {banner && (
-                <div
-                    role="status"
-                    className="mb-4 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                >
-                    {banner}
-                </div>
-            )}
-
-            <Board sections={sections} setSections={setSections} isEditing={isEditing} role={role} />
-
-            {isEditing && busy && (
-                <div className="pointer-events-none fixed inset-0 z-50 flex items-start justify-center">
-                    <div className="mt-8 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
-                        Saving…
-                    </div>
-                </div>
-            )}
+  // -------------------------
+  // RENDER
+  // -------------------------
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6">
+      {/* Top Toolbar */}
+      <div className="mb-4 flex items-center justify-between gap-4">
+        {/* Left: Role Picker */}
+        <RolePicker value={role} onChange={setRole} />
+        {/* Right: Edit + Days of Week Button */}
+        <div className="flex items-center gap-2">
+          <EditToolbar isEditing={isEditing} onToggle={toggleEdit} />
+          <Link
+            href={`/day-in-life/days-of-week${role ? `?role=${encodeURIComponent(role)}` : ""}`}
+            className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            aria-label="Open Days of Week matrix"
+            title="Open Days of Week matrix"
+          >
+            Days of Week
+          </Link>
         </div>
-    );
+      </div>
+
+      {/* Banner */}
+      {banner && (
+        <div
+          role="status"
+          className="mb-4 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 shadow-sm"
+        >
+          {banner}
+        </div>
+      )}
+
+      {/* Main Board */}
+      <Board sections={sections} setSections={setSections} isEditing={isEditing} role={role} />
+
+      {/* Saving overlay */}
+      {isEditing && busy && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-start justify-center">
+          <div className="mt-8 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-lg">
+            Saving…
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-page.tsx:
+
+
+
+************************************************
+
+src/app/day-in-life/days-of-week/DaysOfWeekPageClient.tsx
+
+
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DaysOfWeekJson, WeekOfMonth, Weekday } from "@/lib/daysOfWeek/types";
+import { useSearchParams } from "next/navigation";
+import MatrixEditor from "./components/MatrixEditor"; // ✅ default import to match default export
+import RolePicker from "@/app/day-in-life/components/RolePicker";
+
+const WEEKS: WeekOfMonth[] = ["FirstWeek", "SecondWeek", "ThirdWeek", "FourthWeek"];
+const DAYS: Weekday[] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+export default function DaysOfWeekPageClient() {
+  const qs = useSearchParams();
+
+  // role from query string, editable via RolePicker
+  const [role, setRole] = useState(qs.get("role") ?? "");
+  const [data, setData] = useState<DaysOfWeekJson | null>(null);
+
+  // page editing lifecycle
+  const [isEditing, setIsEditing] = useState(false);
+  const snapshotRef = useRef<DaysOfWeekJson | null>(null);
+
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!role) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/day-in-life/days-of-week/${encodeURIComponent(role)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || "Failed to load Days of Week");
+      }
+      const json = (await res.json()) as DaysOfWeekJson;
+      setData(json);
+    } catch (e: any) {
+      setError(`Could not load Days of Week: ${String(e?.message ?? e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [role]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Save current model then refetch canonical
+  async function exitEditAndSave() {
+    if (!data || !role) {
+      setIsEditing(false);
+      return;
+    }
+    setBusy(true);
+    setBanner("Saving…");
+    setError(null);
+    try {
+      const res = await fetch(`/api/day-in-life/days-of-week/${encodeURIComponent(role)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...data,
+          updatedAt: new Date().toISOString(),
+          version: typeof data.version === "number" ? data.version : 1,
+        } as DaysOfWeekJson),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || "Save failed");
+      }
+      // After successful save, refetch canonical
+      await load();
+      setBanner("Saved.");
+      setTimeout(() => setBanner(null), 1200);
+    } catch (e: any) {
+      console.error(e);
+      setBanner(null);
+      setError(`Save failed: ${String(e?.message ?? e)}`);
+    } finally {
+      setBusy(false);
+      setIsEditing(false);
+    }
+  }
+
+  function toggleEdit() {
+    if (!isEditing) {
+      snapshotRef.current = data ? structuredClone(data) : null;
+      setBanner(null);
+      setIsEditing(true);
+    } else {
+      void exitEditAndSave();
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6 bg-white text-slate-900">
+      {/* Top toolbar: RolePicker (left) and TEAL Edit/Done (right) */}
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <RolePicker value={role} onChange={setRole} />
+
+        <button
+          onClick={toggleEdit}
+          className={`rounded px-3 py-1.5 text-sm font-medium shadow focus:outline-none focus-visible:ring-2
+            ${isEditing ? "bg-teal-700 text-white hover:bg-teal-800 focus-visible:ring-teal-700"
+                        : "bg-teal-600 text-white hover:bg-teal-700 focus-visible:ring-teal-600"}`}
+          aria-pressed={isEditing}
+        >
+          {isEditing ? "Done" : "Edit"}
+        </button>
+      </div>
+
+      {/* Status banners */}
+      {banner && (
+        <div
+          role="status"
+          className="mb-3 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 shadow-sm"
+        >
+          {banner}
+        </div>
+      )}
+      {error && (
+        <div
+          role="alert"
+          className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {error}
+        </div>
+      )}
+
+      {/* Editor */}
+      {role ? (
+        data ? (
+          <MatrixEditor
+            role={role}
+            days={DAYS}
+            weeks={WEEKS}
+            model={data}
+            isEditing={isEditing}
+            onChange={setData}
+            defaultMonthlyCollapsed={true}
+          />
+        ) : busy ? (
+          <div className="text-sm text-slate-500">Loading…</div>
+        ) : (
+          <div className="text-sm text-slate-500">No data.</div>
+        )
+      ) : (
+        <div className="text-sm text-slate-500">Select a role to begin.</div>
+      )}
+
+      {/* Non-blocking saving overlay while editing */}
+      {isEditing && busy && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-start justify-center">
+          <div className="mt-8 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-lg">
+            Saving…
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+*********************************************
+
+src/app/day-in-life/page.tsx:
+
 import DayInLifePageClient from "./DayInLifePageClient";
 
 export default function DayInLifePage() {
     return <DayInLifePageClient />;
 }
 
+**********************************************
 
+src/app/layout.tsx:
 
-src/app/
-layout.tsx:
 /**
  * layout.tsx (Root Layout)
  * ------------------------------------
@@ -433,7 +1300,361 @@ export default function RootLayout({
   );
 }
 
-page.tsx:
+*****************************************
+
+src/app/globals.css:
+
+/* src/app/globals.css */
+
+/* ---- Soft Corporate Modern (Light) ---- */
+
+/* your custom variables BELOW this line */
+@import "tailwindcss";
+
+:root {
+  --bg: #f6f8fb;
+  --card-bg: #ffffff;
+  --card-border: #e6e9ef;
+  --text: #0f172a;
+  --text-muted: #5b6473;
+  --brand: #1e88e5;
+  --ns-fg: #2e7de9;
+  --ns-bg: #eaf3ff;
+  --ns-br: #d5e7ff;
+  --ip-fg: #b58500;
+  --ip-bg: #fff6db;
+  --ip-br: #fde8a8;
+  --cp-fg: #16a34a;
+  --cp-bg: #eafff3;
+  --cp-br: #bbf7d0;
+  --radius: 12px;
+  --shadow: 0 1px 1px rgba(16, 24, 40, .04), 0 8px 24px rgba(16, 24, 40, .06);
+  --focus: 0 0 0 3px rgba(30, 136, 229, .25);
+}
+
+
+/* Page scaffolding */
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  margin: 0;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 24px auto 56px;
+  padding: 0 20px;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.page-title {
+  font-size: 28px;
+  line-height: 1.25;
+  margin: 0 0 4px;
+}
+
+.page-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.page-actions .btn {
+  border-radius: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.page-actions .btn:hover {
+  border-color: #cfd6e0;
+}
+
+.page-actions .btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+@media (max-width: 980px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Cards */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.card-header h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--card-border);
+  color: var(--text-muted);
+  background: #fafbff;
+}
+
+.pill--ns {
+  color: var(--ns-fg);
+  background: var(--ns-bg);
+  border-color: var(--ns-br);
+}
+
+.pill--ip {
+  color: var(--ip-fg);
+  background: var(--ip-bg);
+  border-color: var(--ip-br);
+}
+
+.pill--cp {
+  color: var(--cp-fg);
+  background: var(--cp-bg);
+  border-color: var(--cp-br);
+}
+
+.list {
+  list-style: none;
+  padding: 8px;
+  margin: 0;
+}
+
+.empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 16px;
+}
+
+/* Task rows */
+.task-row {
+  margin: 4px 0;
+}
+
+.task-button {
+  width: 100%;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.task-button:hover {
+  border-color: #cfd6e0;
+}
+
+.task-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.status-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  border: 1px solid var(--card-border);
+  background: #f4f6fa;
+}
+
+.task-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-title {
+  font-size: 14px;
+}
+
+.task-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.attach {
+  color: var(--text-muted);
+}
+
+/* Status chips + row tints */
+.status-chip {
+  font-size: 12px;
+  border-radius: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--card-border);
+}
+
+.status--not-started .task-button {
+  background: var(--ns-bg);
+  border-color: var(--ns-br);
+}
+
+.status--not-started .status-icon {
+  color: var(--ns-fg);
+  background: #f3f8ff;
+  border-color: var(--ns-br);
+}
+
+.status--not-started .status-chip {
+  color: var(--ns-fg);
+  background: #f5faff;
+  border-color: var(--ns-br);
+}
+
+.status--in-progress .task-button {
+  background: var(--ip-bg);
+  border-color: var(--ip-br);
+}
+
+.status--in-progress .status-icon {
+  color: var(--ip-fg);
+  background: #fff8e6;
+  border-color: var(--ip-br);
+}
+
+.status--in-progress .status-chip {
+  color: var(--ip-fg);
+  background: #fff9ea;
+  border-color: var(--ip-br);
+}
+
+.status--completed .task-button {
+  background: var(--cp-bg);
+  border-color: var(--cp-br);
+}
+
+.status--completed .status-icon {
+  color: var(--cp-fg);
+  background: #f1fff8;
+  border-color: var(--cp-br);
+}
+
+.status--completed .status-chip {
+  color: var(--cp-fg);
+  background: #f2fff9;
+  border-color: var(--cp-br);
+}
+
+/* Alerts */
+.alert {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: #fff;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.alert.error {
+  border-color: #ffd6d6;
+  background: #fff1f1;
+}
+
+/* Skeletons */
+.skeleton-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+@media (max-width: 980px) {
+  .skeleton-wrap {
+    grid-template-columns: 1fr;
+  }
+}
+
+.skeleton .sk-title {
+  width: 180px;
+  height: 16px;
+  background: #eef2f7;
+  border-radius: 4px;
+}
+
+.skeleton .sk-pills {
+  display: flex;
+  gap: 8px;
+}
+
+.skeleton .sk-pills span {
+  width: 120px;
+  height: 22px;
+  background: #eef2f7;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.skeleton .list {
+  padding: 12px;
+}
+
+.skeleton .sk-row {
+  height: 44px;
+  background: #f2f5f9;
+  border-radius: 10px;
+  margin: 8px 0;
+}
+
+
+****************************************
+
+src/app/page.tsx:
+
 /**
  * /page.tsx (Home / Landing Page)
  * ------------------------------------
@@ -532,11 +1753,32 @@ export default function HomePage() {
 }
 
 
+************************************************
 
+src/lib/dayOfWeek/types.ts:
 
-src/lib/dayInLife/
+export type Weekday = 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday';
+export type WeekOfMonth = 'FirstWeek' | 'SecondWeek' | 'ThirdWeek' | 'FourthWeek';
 
-diff.ts: 
+export type DoWEntry = {
+    id?: string; // client-only
+    text: string;
+    href?: string;
+};
+
+export type DaysOfWeekJson = {
+    version: number;
+    updatedAt?: string;
+    weekly?: Partial<Record<Weekday, DoWEntry[]>>;
+    monthly?: Partial<Record<WeekOfMonth, Partial<Record<Weekday, DoWEntry[]>>>>;
+    general?: DoWEntry[];
+    discretionary?: DoWEntry[];
+};
+
+***************************************************
+
+src/lib/dayInLife/diff.ts:
+
 import { DayInLifeItem, SectionsMap } from "./types";
 
 export type ChangeSet = {
@@ -595,8 +1837,10 @@ export function computeChangeSet(prev: SectionsMap, next: SectionsMap): ChangeSe
 }
 
 
+**************************************************
 
-normalize.ts:
+src/lib/dayInLife/normalize.ts:
+
 import { SectionsMap, SectionKey, DayInLifeItem } from "./types";
 
 const EMPTY: SectionsMap = {
@@ -635,10 +1879,15 @@ export function normalizePayload(payload: any): SectionsMap {
     return copy;
 }
 
+*****************************************************
 
-reorder.ts: empty
+src/lib/dayInLife/reorder.ts: empty right now
 
-types.ts:
+
+*****************************************************
+
+src/lib/dayInLife/types.ts:
+
 // src/lib/dayInLife/types.ts
 
 export type SectionKey =
@@ -662,161 +1911,35 @@ export type DayInLifeItem = {
 export type SectionsMap = Record<SectionKey, DayInLifeItem[]>;
 
 
-src/app/day-in-life/
-item/[id]/route.ts:
-import { NextRequest } from "next/server";
+*********************************************************
 
-export const dynamic = "force-dynamic";
+***********************Functions***************************
 
-function getEnvOrThrow(name: string): string {
-    const v = process.env[name];
-    if (!v) throw new Error(`Missing env var: ${name}`);
-    return v;
-}
-
-async function proxy(req: NextRequest, method: "PATCH" | "DELETE") {
-    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
-    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
-
-    const id = req.nextUrl.pathname.split("/").pop();
-    if (!id) {
-        return new Response(JSON.stringify({ error: "Missing item id" }), {
-            status: 400,
-            headers: { "content-type": "application/json", "cache-control": "no-store" },
-        });
-    }
-
-    const endpoint =
-        method === "PATCH"
-            ? `${baseUrl}/api/DayInLifeItemUpdate/${encodeURIComponent(id)}`
-            : `${baseUrl}/api/DayInLifeItemDelete/${encodeURIComponent(id)}`;
-
-    const body = method === "PATCH" ? await req.text() : undefined;
-
-    let upstream: Response;
-    try {
-        upstream = await fetch(`${endpoint}?code=${encodeURIComponent(funcKey)}`, {
-            method,
-            headers:
-                method === "PATCH"
-                    ? {
-                        "Content-Type": req.headers.get("content-type") ?? "application/json",
-                        "x-functions-key": funcKey,
-                    }
-                    : { "x-functions-key": funcKey },
-            body,
-            cache: "no-store",
-        });
-    } catch (err: any) {
-        console.error(`Proxy ${method} /item/${id} failed:`, err);
-        return new Response(
-            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
-            {
-                status: 502,
-                headers: { "content-type": "application/json", "cache-control": "no-store" },
-            }
-        );
-    }
-
-    const text = await upstream.text();
-    const contentType = upstream.headers.get("content-type") ?? "application/json";
-    return new Response(text, {
-        status: upstream.status,
-        headers: { "content-type": contentType, "cache-control": "no-store" },
-    });
-}
-
-export async function PATCH(req: NextRequest) {
-    return proxy(req, "PATCH");
-}
-
-export async function DELETE(req: NextRequest) {
-    return proxy(req, "DELETE");
-}
-
-    item/route.ts
-            import { NextRequest } from "next/server";
-
-export const dynamic = "force-dynamic";
-
-function getEnvOrThrow(name: string): string {
-    const v = process.env[name];
-    if (!v) throw new Error(`Missing env var: ${name}`);
-    return v;
-}
-
-export async function POST(req: NextRequest) {
-    const baseUrl = getEnvOrThrow("AZURE_FUNCTION_BASE_URL");
-    const funcKey = getEnvOrThrow("AZURE_FUNCTION_CODE");
-
-    const url = `${baseUrl}/api/DayInLifeItemCreate`;
-    const body = await req.text(); // pass through exactly
-
-    let upstream: Response;
-    try {
-        upstream = await fetch(`${url}?code=${encodeURIComponent(funcKey)}`, {
-            method: "POST",
-            headers: {
-                "Content-Type": req.headers.get("content-type") ?? "application/json",
-                "x-functions-key": funcKey, // belt & suspenders
-            },
-            body,
-            cache: "no-store",
-        });
-    } catch (err: any) {
-        console.error("Proxy POST /item failed:", err);
-        return new Response(
-            JSON.stringify({ error: "Function unreachable", detail: String(err?.message ?? err) }),
-            {
-                status: 502,
-                headers: { "content-type": "application/json", "cache-control": "no-store" },
-            }
-        );
-    }
-
-    // Pass-through body + status
-    const text = await upstream.text();
-    const contentType = upstream.headers.get("content-type") ?? "application/json";
-    return new Response(text, {
-        status: upstream.status,
-        headers: { "content-type": contentType, "cache-control": "no-store" },
-    });
-}
-
-*************************Functions*************************
-
-
-DayInLifeGet:
- init:
+DayOfWeekGet:
+init:
+# DaysOfWeekGet/__init__.py
 import json
 import os
 import logging
 import requests
 import azure.functions as func
-import html
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-
-# SITE + LIST IDS
 SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
-LIST_DIL_ID = "df267411-9d03-4997-807d-e9ab24360585"
 
 
-def _get_env(name: str) -> str:
-    v = os.environ.get(name)
+def _get_env(n: str) -> str:
+    v = os.environ.get(n)
     if not v:
-        raise Exception(f"Missing env var: {name}")
+        raise Exception(f"Missing env var: {n}")
     return v
 
 
 def _get_token() -> str:
-    tenant_id = _get_env("AppRegTenantID")
-    client_id = _get_env("AppRegClientID")
-    client_secret = _get_env("AppRegSecretValue")
-    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    token_url = f"https://login.microsoftonline.com/{_get_env('AppRegTenantID')}/oauth2/v2.0/token"
     data = {
-        "client_id": client_id,
-        "client_secret": client_secret,
+        "client_id": _get_env("AppRegClientID"),
+        "client_secret": _get_env("AppRegSecretValue"),
         "grant_type": "client_credentials",
         "scope": "https://graph.microsoft.com/.default",
     }
@@ -825,115 +1948,139 @@ def _get_token() -> str:
     return r.json()["access_token"]
 
 
-def _headers(token: str, prefer_nonindexed: bool = False):
-    h = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
+def _headers(tok: str):
+    return {
+        "Authorization": f"Bearer {tok}",
         "Accept": "application/json",
     }
-    if prefer_nonindexed:
-        h["Prefer"] = "HonorNonIndexedQueriesWarningMayFailRandomly"
-    return h
 
 
-def _query_items(token: str, site_id: str, list_id: str, filter_expr: str = None, top: int = 999, prefer_nonindexed: bool = False) -> list:
-    url = f"{GRAPH_ROOT}/sites/{site_id}/lists/{list_id}/items?$expand=fields&$top={top}"
-    if filter_expr:
-        url += f"&$filter={filter_expr}"
-    items = []
-    while url:
-        r = requests.get(url, headers=_headers(
-            token, prefer_nonindexed=prefer_nonindexed), timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        items.extend(data.get("value", []))
-        url = data.get("@odata.nextLink")
-    return items
+def _empty_days_of_week(role: str):
+    weeks = {}
+    for w in ["FirstWeek", "SecondWeek", "ThirdWeek", "FourthWeek"]:
+        weeks[w] = {
+            "Monday": [],
+            "Tuesday": [],
+            "Wednesday": [],
+            "Thursday": [],
+            "Friday": [],
+        }
 
-
-def _shape_sections(items: list, role: str):
-    sections = {
-        "PriorToStandUp": [],
-        "AfterStandUp": [],
-        "Calendar": [],
-        "ToBeScheduled": [],
-        "Other": []
-    }
-    latest_modified = None
-    for it in items:
-        fields = it.get("fields") or {}
-        section = fields.get("Section", "Other")
-        if section not in sections:
-            section = "Other"
-        sections[section].append({
-            "id": str(it.get("id")),
-            "text": fields.get("Title", ""),
-            "order": fields.get("Order", 0),
-            "active": fields.get("Active", True),
-            "role": fields.get("RoleCode"),
-        })
-        mod = it.get("lastModifiedDateTime") or fields.get("Modified")
-        if mod and (latest_modified is None or mod > latest_modified):
-            latest_modified = mod
-    for s in sections:
-        sections[s].sort(key=lambda x: (x.get("order", 0), int(x["id"])))
     return {
         "role": role,
-        "sections": sections,
-        "modified": latest_modified
+        "version": 1,
+        "weeks": weeks,
     }
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("DayInLifeGet: start")
+    role = (req.route_params.get("role") or "").strip()
+    if not role:
+        return func.HttpResponse(
+            json.dumps({"error": "role required"}),
+            status_code=400,
+            mimetype="application/json",
+        )
+
     try:
-        if not LIST_DIL_ID or LIST_DIL_ID.startswith("<REPLACE"):
+        tok = _get_token()
+
+        # Path-based addressing to Shared Documents/DayInLifeCalendars/<role>.json
+        url = (
+            f"{GRAPH_ROOT}/sites/{SITE_ID}"
+            f"/drive/root:/Shared Documents/DayInLifeCalendars/{role}.json:/content"
+        )
+
+        r = requests.get(url, headers=_headers(tok), timeout=30)
+
+        # 🔑 If file does not exist, return initialized model
+        if r.status_code == 404:
+            payload = _empty_days_of_week(role)
             return func.HttpResponse(
-                json.dumps(
-                    {"ok": False, "error": "LIST_DIL_ID not set in App Settings"}),
-                status_code=500, mimetype="application/json"
+                json.dumps(payload),
+                status_code=200,
+                mimetype="application/json",
             )
 
-        token = _get_token()
-        role = (req.params.get("role") or "").strip()
-        # Only filter when role provided; else return all (enables page-load populate)
-        filter_expr = None
-        if role:
-            # NOTE: verify internal names: RoleCode, Active
-            filter_expr = f"(fields/RoleCode eq '{role}') and (fields/Active eq true)"
+        r.raise_for_status()
 
-        items = _query_items(
-            token,
-            SITE_ID,
-            LIST_DIL_ID,
-            filter_expr=filter_expr,
-            top=999,
-            prefer_nonindexed=True,
-        )
-        payload = _shape_sections(items, role or None)
-        payload["ok"] = True
-        payload["count"] = sum(len(v) for v in payload["sections"].values())
-        return func.HttpResponse(json.dumps(payload), status_code=200, mimetype="application/json")
-
-    except requests.HTTPError as e:
-        logging.exception("Graph HTTP error")
-        status = getattr(e.response, "status_code", 500)
-        text = getattr(e.response, "text", "")
+        # File exists → return as-is
         return func.HttpResponse(
-            json.dumps({"ok": False, "error": "graph_http_error",
-                       "statusCode": status, "responseText": text}),
-            status_code=500, mimetype="application/json"
+            r.text,
+            status_code=200,
+            mimetype="application/json",
         )
+
     except Exception as e:
-        logging.exception("Unhandled error in DayInLifeGet")
+        logging.exception("DaysOfWeekGet failed")
         return func.HttpResponse(
-            json.dumps(
-                {"ok": False, "error": "unhandled_exception", "message": str(e)}),
-            status_code=500, mimetype="application/json"
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json",
         )
 
 
-function.json:
+**************************************
+
+DaysOfWeekPut:
+init:
+# DaysOfWeekPut/__init__.py
+import json
+import os
+import logging
+import requests
+import azure.functions as func
+GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
+
+
+def _get_env(n: str) -> str:
+    v = os.environ.get(n)
+    if not v:
+        raise Exception(f"Missing env var: {n}")
+    return v
+
+
+def _get_token() -> str:
+    token_url = f"https://login.microsoftonline.com/{_get_env('AppRegTenantID')}/oauth2/v2.0/token"
+    data = {
+        "client_id": _get_env("AppRegClientID"),
+        "client_secret": _get_env("AppRegSecretValue"),
+        "grant_type": "client_credentials",
+        "scope": "https://graph.microsoft.com/.default",
+    }
+    r = requests.post(token_url, data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+def _headers(tok: str): return {
+    "Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    role = (req.route_params.get("role") or "").strip()
+    if not role:
+        return func.HttpResponse(json.dumps({"error": "role required"}), status_code=400, mimetype="application/json")
+
+    try:
+        body = req.get_json()
+    except:
+        return func.HttpResponse(json.dumps({"error": "Invalid JSON"}), status_code=400, mimetype="application/json")
+
+    try:
+        tok = _get_token()
+        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/drive/root:/Shared Documents/DayInLifeCalendars/{role}.json:/content"
+        # Simple upload (small JSON) — PUT content
+        r = requests.put(url, headers=_headers(
+            tok), data=json.dumps(body), timeout=30)
+        r.raise_for_status()
+        return func.HttpResponse(json.dumps({"ok": True}), status_code=200, mimetype="application/json")
+    except Exception as e:
+        logging.exception("DaysOfWeekPut failed")
+        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
+
+funciton.json:
 {
     "scriptFile": "__init__.py",
     "bindings": [
@@ -943,9 +2090,9 @@ function.json:
             "direction": "in",
             "name": "req",
             "methods": [
-                "get"
+                "put"
             ],
-            "route": "DayInLifeGet"
+            "route": "DaysOfWeekPut/{role}"
         },
         {
             "type": "http",
@@ -955,7 +2102,9 @@ function.json:
     ]
 }
 
-DayInLifeItemCreate:
+*****************************************************
+
+DayInLifeCalendarGet:
 init:
 import json
 import os
@@ -964,122 +2113,218 @@ import requests
 import azure.functions as func
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-
 SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
-LIST_DIL_ID = "<REPLACE-WITH-YOUR-LIST-ID>"
-
-VALID_SECTIONS = {
-    "PriorToStandUp",
-    "AfterStandUp",
-    "Calendar",
-    "ToBeScheduled",
-    "Other"
-}
+CAL_FOLDER = "DayInLifeCalendars"  # at drive root
 
 
-def _get_env(name: str):
-    v = os.environ.get(name)
+def _get_env(n: str) -> str:
+    v = os.environ.get(n)
     if not v:
-        raise Exception(f"Missing env var: {name}")
+        raise Exception(f"Missing env var: {n}")
     return v
 
 
-def _get_token():
+def _get_token() -> str:
     tenant = _get_env("AppRegTenantID")
     client = _get_env("AppRegClientID")
     secret = _get_env("AppRegSecretValue")
-    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
-    data = {
-        "client_id": client,
-        "client_secret": secret,
-        "grant_type": "client_credentials",
-        "scope": "https://graph.microsoft.com/.default",
-    }
-    r = requests.post(token_url, data=data, timeout=30)
+    url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    r = requests.post(url, data={
+        "client_id": client, "client_secret": secret,
+        "grant_type": "client_credentials", "scope": "https://graph.microsoft.com/.default"
+    }, timeout=30)
     r.raise_for_status()
     return r.json()["access_token"]
 
 
-def _headers(token: str):
+def _headers(tok: str):
+    return {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+
+
+def _default_payload():
     return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
+        "version": 0,
+        "updatedAt": None,
+        "weekly": {"Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": []},
+        "monthly": {
+            "FirstWeek": {"Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": []},
+            "SecondWeek": {"Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": []},
+            "ThirdWeek": {"Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": []},
+            "FourthWeek": {"Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": []}
+        },
+        "discretionary": []
     }
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("DayInLifeItemCreate")
+    logging.info("DayInLifeCalendarGet")
+    role = (req.params.get("role") or "").strip()
+    if not role:
+        return func.HttpResponse(json.dumps({"error": "Missing role"}), status_code=400, mimetype="application/json")
+    try:
+        tok = _get_token()
+        # GET file content by path: /sites/{site-id}/drive/root:/DayInLifeCalendars/{role}.json:/content
+        path = f"{CAL_FOLDER}/{role}.json"
+        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/drive/root:/{path}:/content"
+        r = requests.get(url, headers=_headers(tok), timeout=30)
+        if r.status_code == 404:
+            return func.HttpResponse(json.dumps(_default_payload()), status_code=200, mimetype="application/json")
+        r.raise_for_status()
+        # The response is raw content (bytes). Decode and ensure JSON.
+        payload = json.loads(r.content.decode("utf-8"))
+        return func.HttpResponse(json.dumps(payload), status_code=200, mimetype="application/json")
+    except requests.HTTPError as e:
+        logging.exception("Graph HTTP error")
+        txt = getattr(e.response, "text", "")
+        return func.HttpResponse(json.dumps({"error": "Graph HTTP error", "details": txt}), status_code=502, mimetype="application/json")
+    except Exception as e:
+        logging.exception("Unhandled error")
+        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
+
+
+function.json:
+{
+    "bindings": [
+        {
+            "authLevel": "function",
+            "type": "httpTrigger",
+            "direction": "in",
+            "name": "req",
+            "methods": [
+                "get"
+            ],
+            "route": "DayInLifeCalendarGet"
+        },
+        {
+            "type": "http",
+            "direction": "out",
+            "name": "res"
+        }
+    ]
+}
+
+*************************************************
+
+DayInLifeCalendarUpdate:
+init:
+import json
+import os
+import logging
+import requests
+import datetime
+import azure.functions as func
+
+GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
+CAL_FOLDER = "DayInLifeCalendars"  # drive root folder
+
+
+def _get_env(n: str) -> str:
+    v = os.environ.get(n)
+    if not v:
+        raise Exception(f"Missing env var: {n}")
+    return v
+
+
+def _get_token() -> str:
+    tenant = _get_env("AppRegTenantID")
+    client = _get_env("AppRegClientID")
+    secret = _get_env("AppRegSecretValue")
+    url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    r = requests.post(url, data={
+        "client_id": client, "client_secret": secret,
+        "grant_type": "client_credentials", "scope": "https://graph.microsoft.com/.default"
+    }, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+def _headers(tok: str, content=False):
+    h = {"Authorization": f"Bearer {tok}"}
+    if content:
+        h["Content-Type"] = "application/json"
+    return h
+
+
+def _ensure_folder(tok: str):
+    # Try to get the folder; if 404, create it.
+    url = f"{GRAPH_ROOT}/sites/{SITE_ID}/drive/root:/{CAL_FOLDER}"
+    r = requests.get(url, headers=_headers(tok), timeout=20)
+    if r.status_code == 404:
+        # create folder at root
+        create_url = f"{GRAPH_ROOT}/sites/{SITE_ID}/drive/root/children"
+        body = {"name": CAL_FOLDER, "folder": {},
+                "@microsoft.graph.conflictBehavior": "replace"}
+        cr = requests.post(create_url, headers=_headers(
+            tok, content=True), data=json.dumps(body), timeout=20)
+        cr.raise_for_status()
+    elif r.ok:
+        return
+    else:
+        r.raise_for_status()
+
+
+def _get_existing(tok: str, role: str):
+    path = f"{CAL_FOLDER}/{role}.json"
+    url = f"{GRAPH_ROOT}/sites/{SITE_ID}/drive/root:/{path}:/content"
+    r = requests.get(url, headers=_headers(tok), timeout=30)
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return json.loads(r.content.decode("utf-8"))
+
+
+def _put_json(tok: str, role: str, obj: dict):
+    path = f"{CAL_FOLDER}/{role}.json"
+    url = f"{GRAPH_ROOT}/sites/{SITE_ID}/drive/root:/{path}:/content"
+    data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    r = requests.put(
+        url, headers={"Authorization": f"Bearer {tok}"}, data=data, timeout=30)
+    r.raise_for_status()
+    return True
+
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("DayInLifeCalendarUpdate")
     try:
         body = req.get_json()
-    except:
-        return func.HttpResponse(
-            json.dumps({"error": "Invalid JSON"}),
-            status_code=400,
-            mimetype="application/json"
-        )
+    except Exception:
+        return func.HttpResponse(json.dumps({"error": "Invalid JSON body"}), status_code=400, mimetype="application/json")
 
     role = (body.get("role") or "").strip()
-    section = (body.get("section") or "").strip()
-    text = (body.get("text") or "").strip()
-    order = body.get("order", 1)
-    active = body.get("active", True)
-
-    if not role or not text or not section:
-        return func.HttpResponse(
-            json.dumps({"error": "role, section, text required"}),
-            status_code=400,
-            mimetype="application/json"
-        )
-
-    if section not in VALID_SECTIONS:
-        return func.HttpResponse(
-            json.dumps({"error": f"Invalid section: {section}"}),
-            status_code=400,
-            mimetype="application/json"
-        )
+    calendar = body.get("calendar")
+    if not role or calendar is None:
+        return func.HttpResponse(json.dumps({"error": "Provide 'role' and 'calendar'"}), status_code=400, mimetype="application/json")
 
     try:
-        order = int(order)
-    except:
-        order = 1
+        tok = _get_token()
+        _ensure_folder(tok)
 
-    try:
-        token = _get_token()
-        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items"
-        body = {
-            "fields": {
-                "Title": text,
-                "RoleCode": role,
-                "Section": section,
-                "Order": order,
-                "Active": bool(active)
-            }
+        # fetch current to increment version
+        current = _get_existing(tok, role)
+        next_version = (current.get("version", 0) +
+                        1) if isinstance(current, dict) else 1
+        now_iso = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+        # persist new payload
+        payload = {
+            "version": next_version,
+            "updatedAt": now_iso,
+            "weekly": calendar.get("weekly", {}),
+            "monthly": calendar.get("monthly", {}),
+            "discretionary": calendar.get("discretionary", [])
         }
+        _put_json(tok, role, payload)
 
-        r = requests.post(url, headers=_headers(token),
-                          data=json.dumps(body), timeout=30)
-        r.raise_for_status()
-        data = r.json()
+        return func.HttpResponse(json.dumps(payload), status_code=200, mimetype="application/json")
 
-        resp = {
-            "id": str(data.get("id")),
-            "text": text,
-            "role": role,
-            "section": section,
-            "order": order,
-            "active": active
-        }
-
-        return func.HttpResponse(json.dumps(resp), status_code=201, mimetype="application/json")
-
+    except requests.HTTPError as e:
+        logging.exception("Graph HTTP error")
+        txt = getattr(e.response, "text", "")
+        return func.HttpResponse(json.dumps({"error": "Graph HTTP error", "details": txt}), status_code=502, mimetype="application/json")
     except Exception as e:
-        logging.exception("Unhandled error in create")
-        return func.HttpResponse(
-            json.dumps({"error": str(e)}),
-            status_code=500,
-            mimetype="application/json"
-        )
+        logging.exception("Unhandled error")
+        return func.HttpResponse(json.dumps({"error": str(e)}), status_code=500, mimetype="application/json")
 
 
 function.json:
@@ -1091,246 +2336,10 @@ function.json:
             "direction": "in",
             "name": "req",
             "methods": [
-                "post"
-            ],
-            "route": "DayInLifeItemCreate"
-        },
-        {
-            "type": "http",
-            "direction": "out",
-            "name": "res"
-        }
-    ]
-}
-
-
-DayInLifeItemDelete:
-init:
-import json
-import os
-import logging
-import requests
-import azure.functions as func
-
-GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
-LIST_DIL_ID = "df267411-9d03-4997-807d-e9ab24360585"
-
-
-def _get_env(name: str):
-    v = os.environ.get(name)
-    if not v:
-        raise Exception(f"Missing env var: {name}")
-    return v
-
-
-def _get_token():
-    tenant = _get_env("AppRegTenantID")
-    client = _get_env("AppRegClientID")
-    secret = _get_env("AppRegSecretValue")
-    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
-    data = {
-        "client_id": client,
-        "client_secret": secret,
-        "grant_type": "client_credentials",
-        "scope": "https://graph.microsoft.com/.default",
-    }
-    r = requests.post(token_url, data=data, timeout=30)
-    r.raise_for_status()
-    return r.json()["access_token"]
-
-
-def _headers(token: str):
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-
-def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("DayInLifeItemDelete")
-    itemId = req.route_params.get("itemId")
-    if not itemId:
-        return func.HttpResponse(
-            json.dumps({"error": "Missing itemId"}),
-            status_code=400,
-            mimetype="application/json"
-        )
-    try:
-        token = _get_token()
-        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items/{itemId}/fields"
-        # Soft delete: set Active = false
-        body = {"Active": False}
-        r = requests.patch(url, headers=_headers(
-            token), data=json.dumps(body), timeout=30)
-        r.raise_for_status()
-        return func.HttpResponse(status_code=204)
-    except Exception as e:
-        logging.exception("Delete error")
-        return func.HttpResponse(
-            json.dumps({"error": str(e)}),
-            status_code=500,
-            mimetype="application/json"
-        )
-
-
-function.json:
-{
-    "bindings": [
-        {
-            "authLevel": "function",
-            "type": "httpTrigger",
-            "direction": "in",
-            "name": "req",
-            "methods": [
-                "delete"
-            ],
-            "route": "DayInLifeItemDelete/{itemId}"
-        },
-        {
-            "type": "http",
-            "direction": "out",
-            "name": "res"
-        }
-    ]
-}
-
-
-DayInLifeItemUpdate:
-init:
-import json
-import os
-import logging
-import requests
-import azure.functions as func
-
-GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
-SITE_ID = "integracare.sharepoint.com,1d0ae5f6-8478-4c7f-a38d-6f72af2cb34f,478b6448-3c9d-4800-b8a2-a3bd74605d0d"
-LIST_DIL_ID = "df267411-9d03-4997-807d-e9ab24360585"
-
-VALID_SECTIONS = {
-    "PriorToStandUp",
-    "AfterStandUp",
-    "ToBeScheduled",
-    "Other"
-}
-
-
-def _get_env(name: str):
-    v = os.environ.get(name)
-    if not v:
-        raise Exception(f"Missing env var: {name}")
-    return v
-
-
-def _get_token():
-    tenant = _get_env("AppRegTenantID")
-    client = _get_env("AppRegClientID")
-    secret = _get_env("AppRegSecretValue")
-    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
-    data = {
-        "client_id": client,
-        "client_secret": secret,
-        "grant_type": "client_credentials",
-        "scope": "https://graph.microsoft.com/.default",
-    }
-    r = requests.post(token_url, data=data, timeout=30)
-    r.raise_for_status()
-    return r.json()["access_token"]
-
-
-def _headers(token: str):
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-
-def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info("DayInLifeItemUpdate")
-    itemId = req.route_params.get("itemId")
-    if not itemId:
-        return func.HttpResponse(
-            json.dumps({"error": "Missing itemId"}),
-            status_code=400,
-            mimetype="application/json"
-        )
-
-    try:
-        body = req.get_json()
-    except:
-        return func.HttpResponse(
-            json.dumps({"error": "Invalid JSON"}),
-            status_code=400,
-            mimetype="application/json"
-        )
-
-    fields_update = {}
-    if "text" in body:
-        fields_update["Title"] = (body["text"] or "").strip()
-
-    if "section" in body:
-        sec = (body["section"] or "").strip()
-        if sec not in VALID_SECTIONS:
-            return func.HttpResponse(
-                json.dumps({"error": f"Invalid section: {sec}"}),
-                status_code=400,
-                mimetype="application/json"
-            )
-        fields_update["Section"] = sec
-
-    if "order" in body:
-        try:
-            fields_update["Order"] = int(body["order"])
-        except:
-            return func.HttpResponse(
-                json.dumps({"error": "Order must be integer"}),
-                status_code=400,
-                mimetype="application/json"
-            )
-
-    if "active" in body:
-        fields_update["Active"] = bool(body["active"])
-
-    if not fields_update:
-        return func.HttpResponse(
-            json.dumps({"error": "No valid fields provided"}),
-            status_code=400,
-            mimetype="application/json"
-        )
-
-    try:
-        token = _get_token()
-        url = f"{GRAPH_ROOT}/sites/{SITE_ID}/lists/{LIST_DIL_ID}/items/{itemId}/fields"
-        r = requests.patch(url, headers=_headers(
-            token), data=json.dumps(fields_update), timeout=30)
-        r.raise_for_status()
-        resp = {"id": itemId}
-        resp.update(fields_update)
-        return func.HttpResponse(json.dumps(resp), status_code=200, mimetype="application/json")
-    except Exception as e:
-        logging.exception("Unhandled update error")
-        return func.HttpResponse(
-            json.dumps({"error": str(e)}),
-            status_code=500,
-            mimetype="application/json"
-        )
-
-
-function.json:
-{
-    "bindings": [
-        {
-            "authLevel": "function",
-            "type": "httpTrigger",
-            "direction": "in",
-            "name": "req",
-            "methods": [
+                "post",
                 "patch"
             ],
-            "route": "DayInLifeItemUpdate/{itemId}"
+            "route": "DayInLifeCalendarUpdate"
         },
         {
             "type": "http",
@@ -1339,13 +2348,6 @@ function.json:
         }
     ]
 }
-
-
-
-
-
-
-
 
 
 

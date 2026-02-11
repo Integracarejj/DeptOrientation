@@ -29,13 +29,11 @@ export default function RolePicker({
         <select
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            // Closed control styling (Tailwind)
             className="
-        border border-slate-400 rounded px-2 py-1
-        bg-slate-900 text-slate-100
-        dark:bg-slate-900 dark:text-slate-100
-        focus:outline-none focus:ring-2 focus:ring-blue-500
-      "
+                border border-slate-300 rounded px-2 py-1 text-sm
+                bg-white text-slate-900
+                focus:outline-none focus:ring-2 focus:ring-blue-500
+            "
         >
             <option value="">Select role…</option>
             {ROLE_OPTIONS.map((r) => (

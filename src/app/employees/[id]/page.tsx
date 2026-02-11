@@ -643,7 +643,7 @@ export default function EmployeeDetailPage() {
                 </Link>
             </div>
 
-            <Tabs active={tab} onChange={setTab} />
+
 
             {/* Orientation tab */}
             {tab === "orientation" && (
